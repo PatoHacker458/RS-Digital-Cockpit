@@ -1,6 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.renaultsport.clio172_cockpit">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- ======================================================================= -->
     <!-- PERMISOS DE RED Y SERVICIOS CLOUD (FIREBASE & GOOGLE MAPS)              -->
