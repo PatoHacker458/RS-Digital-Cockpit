@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -113,7 +112,7 @@ class AppTheme {
         onSecondary: Colors.black,
         onSurface: Color(0xFFF3F4F6),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: RenaultSportPalette.speedlineTuriniAnthracite,
         elevation: 0,
         shape: RoundedRectangleBorder(
@@ -211,7 +210,7 @@ class AppTheme {
         onSecondary: Colors.white,
         onSurface: Color(0xFF0F172A),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: RenaultSportPalette.pureCabinWhite,
         elevation: 0,
         shape: RoundedRectangleBorder(

@@ -25,3 +25,4 @@ class DefaultFirebaseOptions {
     storageBucket: 'clio-rs-172-telemetry-hub.firebasestorage.app',
   );
 }
+

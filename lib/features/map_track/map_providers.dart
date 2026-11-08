@@ -117,9 +117,9 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       _gpsSubscription?.cancel();
       _trackSimulationTimer?.cancel();
     });
-    return const TrackMapTelemetryState(
+    return TrackMapTelemetryState(
       currentGpsPosition: _autodromoCenter,
-      routePolylinePoints: <LatLng>[_autodromoCenter],
+      routePolylinePoints: const <LatLng>[_autodromoCenter],
       officialPoiMarkers: _defaultPois,
       selectedPoi: _defaultPois[0],
     );
