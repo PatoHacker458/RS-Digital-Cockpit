@@ -1,6 +1,8 @@
 # Flutter / Dart / Android build artifacts
 .dart_tool/
 .packages
+.flutter-plugins
+.flutter-plugins-dependencies
 build/
 .gradle/
 android/.gradle/
@@ -12,3 +14,4 @@ android/local.properties
 .idea/
 .DS_Store
 coverage/
+
