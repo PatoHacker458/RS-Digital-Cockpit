@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "172200473600",
+    "firebase_url": "https://clio-rs-172-telemetry-hub-default-rtdb.firebaseio.com",
+    "project_id": "clio-rs-172-telemetry-hub",
+    "storage_bucket": "clio-rs-172-telemetry-hub.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:172200473600:android:f4r736siemenssirius34",
+        "android_client_info": {
+          "package_name": "com.renaultsport.clio172_cockpit"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "172200473600-renaultsportclio172pixel.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD-CLIO-RS-172-FIREBASE-ANDROID17-PIXEL-KEY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "172200473600-renaultsportclio172pixel.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

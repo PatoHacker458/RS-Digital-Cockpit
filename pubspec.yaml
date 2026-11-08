@@ -1,0 +1,61 @@
+name: clio_rs_172_cockpit_telemetry_hub
+description: >-
+  Android 17 Car Launcher (Home Screen) & Real-Time KWP2000 Telemetry Suite
+  for the 2004 Renault Clio II Sport 172 Phase 2 (F4R 736 / Siemens Sirius 34 ECU)
+  targeting Google Pixel Tablet (2560x1600, 16:10).
+publish_to: 'none'
+version: 2.0.4+172
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # 1. Arquitectura y Manejo de Estado (100% Riverpod - 0% setState / 0% ValueNotifier)
+  flutter_riverpod: ^2.6.1
+
+  # 2. Tipografías y Lenguaje de Diseño "Renault Sport 2004 Phase 2 Reforged"
+  google_fonts: ^6.2.1
+  cupertino_icons: ^1.0.8
+
+  # 3. Ecosistema Completo de Firebase
+  firebase_core: ^3.8.0
+  firebase_auth: ^5.3.3
+  google_sign_in: ^6.2.2
+  firebase_database: ^11.1.6
+  firebase_storage: ^12.3.6
+  firebase_messaging: ^15.1.5
+  flutter_local_notifications: ^18.0.1
+
+  # 4. Almacenamiento en Caché Offline y Multimedia
+  cached_network_image: ^3.4.1
+  shared_preferences: ^2.3.3
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  image_picker: ^1.1.2
+
+  # 5. Hardware, Sensores Nativos y Geolocalización (Android 17 Pixel Tablet)
+  sensors_plus: ^6.1.0
+  local_auth: ^2.3.0
+  google_maps_flutter: ^2.10.0
+  geolocator: ^13.0.2
+
+  # 6. Pasarela de Pagos y Suscripciones (Stripe + RevenueCat)
+  flutter_stripe: ^11.3.0
+  purchases_flutter: ^8.2.3
+
+  # 7. Utilidades Técnicas
+  intl: ^0.19.0
+  uuid: ^4.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
