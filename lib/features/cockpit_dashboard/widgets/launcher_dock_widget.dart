@@ -4,9 +4,10 @@ import '../../../core/launcher/car_launcher_service.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../cloud_sync_fcm/fcm_notification_service.dart';
 
-/// Los 5 apartados principales solicitados: COCKPIT, TRACK, GARAGE, ACCOUNT, ECU
+/// Apartados principales del Dock: COCKPIT, MULTIMEDIA, TRACK, GARAGE, ACCOUNT, ECU
 enum CockpitSectionTab {
   cockpitHud('COCKPIT', Icons.speed_rounded),
+  multimediaHub('MULTIMEDIA', Icons.headphones_rounded),
   trackMapGps('TRACK', Icons.map_rounded),
   digitalGarage('GARAGE', Icons.shopping_bag_rounded),
   pilotProfile('ACCOUNT', Icons.person_rounded),
