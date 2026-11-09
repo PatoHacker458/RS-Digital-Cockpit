@@ -29,86 +29,96 @@ class RenaultSportTachometerWidget extends ConsumerWidget {
             showLedBar ? math.max(120.0, availableHeight - 38.0) : availableHeight;
         final size = math.min(constraints.maxWidth, dialAreaHeight);
 
-        return Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (showLedBar) ...[
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 380),
-                child: _ProgressiveShiftLightBar(
-                  rpm: frame.rpm,
-                  isEngineCold: frame.isEngineCold,
-                  stage: frame.shiftLightStage,
-                  flashPhase: flashPhase,
-                ),
-              ),
-              const SizedBox(height: 6),
-            ],
-            Expanded(
-              child: Center(
-                child: SizedBox(
-                  width: size,
-                  height: size,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      ShaderMask(
-                        shaderCallback: (Rect bounds) {
-                          return LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: isDark
-                                ? <Color>[
-                                    Colors.white,
-                                    skin.primaryDialColor.withValues(alpha: 0.92),
-                                    Colors.white,
-                                  ]
-                                : <Color>[
-                                    RenaultSportPalette.mondialBlue,
-                                    Colors.black87,
-                                    RenaultSportPalette.cupNeedleRed,
-                                  ],
-                            stops: const <double>[0.0, 0.55, 1.0],
-                          ).createShader(bounds);
-                        },
-                        blendMode: BlendMode.srcATop,
-                        child: CustomPaint(
-                          size: Size(size, size),
-                          painter: _SagemBezelShaderRingPainter(isDark: isDark),
-                        ),
-                      ),
-                      CustomPaint(
-                        size: Size(size, size),
-                        painter: _RenaultSportTachometerPainter(
-                          rpm: frame.rpm,
-                          coolantTempC: frame.coolantTempC,
-                          isEngineCold: frame.isEngineCold,
-                          shiftStage: frame.shiftLightStage,
-                          vvtActive: frame.vvtDephaserActive,
-                          skin: skin,
-                          isDark: isDark,
-                          flashPhase: flashPhase,
-                        ),
-                      ),
-                      Positioned(
-                        bottom: size * 0.11,
-                        width: size * 0.68,
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: _CenterDigitalClusterReadout(
-                            frame: frame,
-                            skin: skin,
-                            isDark: isDark,
-                            flashPhase: flashPhase,
+        return TweenAnimationBuilder<double>(
+          tween: Tween<double>(end: frame.rpm),
+          duration: Duration(milliseconds: frame.isSimulator ? 32 : 110),
+          curve: Curves.easeOutCubic,
+          builder: (context, smoothRpm, _) {
+            final smoothedFrame = frame.copyWith(rpm: smoothRpm);
+            return Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (showLedBar) ...[
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 380),
+                    child: _ProgressiveShiftLightBar(
+                      rpm: smoothRpm,
+                      isEngineCold: smoothedFrame.isEngineCold,
+                      stage: smoothedFrame.shiftLightStage,
+                      flashPhase: flashPhase,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                Expanded(
+                  child: Center(
+                    child: SizedBox(
+                      width: size,
+                      height: size,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          ShaderMask(
+                            shaderCallback: (Rect bounds) {
+                              return LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: isDark
+                                    ? <Color>[
+                                        Colors.white,
+                                        skin.primaryDialColor
+                                            .withValues(alpha: 0.92),
+                                        Colors.white,
+                                      ]
+                                    : <Color>[
+                                        RenaultSportPalette.mondialBlue,
+                                        Colors.black87,
+                                        RenaultSportPalette.cupNeedleRed,
+                                      ],
+                                stops: const <double>[0.0, 0.55, 1.0],
+                              ).createShader(bounds);
+                            },
+                            blendMode: BlendMode.srcATop,
+                            child: CustomPaint(
+                              size: Size(size, size),
+                              painter:
+                                  _SagemBezelShaderRingPainter(isDark: isDark),
+                            ),
                           ),
-                        ),
+                          CustomPaint(
+                            size: Size(size, size),
+                            painter: _RenaultSportTachometerPainter(
+                              rpm: smoothRpm,
+                              coolantTempC: smoothedFrame.coolantTempC,
+                              isEngineCold: smoothedFrame.isEngineCold,
+                              shiftStage: smoothedFrame.shiftLightStage,
+                              vvtActive: smoothedFrame.vvtDephaserActive,
+                              skin: skin,
+                              isDark: isDark,
+                              flashPhase: flashPhase,
+                            ),
+                          ),
+                          Positioned(
+                            bottom: size * 0.11,
+                            width: size * 0.68,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: _CenterDigitalClusterReadout(
+                                frame: smoothedFrame,
+                                skin: skin,
+                                isDark: isDark,
+                                flashPhase: flashPhase,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
-              ),
-            ),
-          ],
+              ],
+            );
+          },
         );
       },
     );

@@ -290,6 +290,7 @@ class RealElm327BluetoothDataSource implements ObdDataSource {
   final List<String> _terminalLogs = <String>[];
   bool _connected = false;
   bool _pollingActive = false;
+  bool _supportsSingleFrameSuffix = false;
   Future<void> _serialLock = Future<void>.value();
   ObdTelemetryFrame _currentFrame = ObdTelemetryFrame.initial(isSimulator: false);
 
@@ -421,6 +422,25 @@ class RealElm327BluetoothDataSource implements ObdDataSource {
         _appendLog(
           'AVISO: Adaptador conectado, pero la ECU aún no responde PIDs. Verifica que la llave esté en CONTACTO (ON) o motor encendido.',
         );
+      } else {
+        // 4. Optimización de latencia post-BUS INIT:
+        // Reducir el tiempo de espera post-trama a 100ms (ATST19) y activar Adaptive Timing agresivo (ATAT2)
+        await _sendCommandSerialized('ATST19', timeoutMs: 500);
+        await _sendCommandSerialized('ATAT2', timeoutMs: 500);
+
+        // Probar si el chip ELM327 soporta el sufijo de 1 sola respuesta ("010C1")
+        // que evita esperar 200ms a una segunda ECU inexistente y duplica los Hz de RPM.
+        final singleFrameTest =
+            await _sendCommandSerialized('010C1', timeoutMs: 900);
+        final testRpmVal = Sirius34KwpParser.parseRpm(singleFrameTest);
+        if (testRpmVal != null && !singleFrameTest.contains('?')) {
+          _supportsSingleFrameSuffix = true;
+          _currentFrame = _currentFrame.copyWith(rpm: testRpmVal);
+          _appendLog('Modo Turbo K-Line activo (010C1 Single-Frame + ATST19 + ATAT2)');
+        } else {
+          _supportsSingleFrameSuffix = false;
+          _appendLog('Modo K-Line rápido activo (ATST19 + ATAT2)');
+        }
       }
 
       _currentFrame = _currentFrame.copyWith(
@@ -440,108 +460,138 @@ class RealElm327BluetoothDataSource implements ObdDataSource {
     }
   }
 
-  /// Bucle de Cola de Prioridad K-Line con timeouts reales de hasta 1200ms
-  /// (retorna inmediatamente en cuanto el ELM327 envía el carácter '>'):
-  /// - Prioridad Alta (cada ciclo): RPM (010C), Velocidad (010D), TPS (0111)
-  /// - Prioridad Media (cada 1.2s): Carga Motor (0104), Avance (010E), MAP (010B)
-  /// - Prioridad Baja (cada 3.5s): Refrigerante (0105), IAT (010F), Voltaje (ATRV)
+  String _pidCmd(String basePid) =>
+      _supportsSingleFrameSuffix ? '${basePid}1' : basePid;
+
+  /// Multiplexor K-Line con Prioridad Ultra-Alta en RPM (`010C1`):
+  /// En lugar de pedir 6 sensores seguidos (lo que congelaba las RPM por ~1.5s),
+  /// intercala 2 a 3 lecturas de RPM seguidas por cada 1 sensor secundario en rotación:
+  /// `[RPM -> RPM -> Sensor Secundario -> RPM -> RPM -> Sensor Secundario...]`
+  /// dedicando ~75% del ancho de banda de 10.4 kbps exclusivamente al tacómetro.
   Future<void> _startKLinePriorityPollingLoop() async {
-    var lastMediumPoll = DateTime.fromMillisecondsSinceEpoch(0);
-    var lastLowPoll = DateTime.fromMillisecondsSinceEpoch(0);
     var responsesInWindow = 0;
     var windowStart = DateTime.now();
     var cycleCount = 0;
+    var secondarySlotIndex = 0;
+
+    // Secuencia rotativa de sensores secundarios (1 solo por ciclo para nunca frenar las RPM)
+    const secondarySchedule = <String>[
+      '0111', // TPS (Acelerador)
+      '010D', // Velocidad km/h
+      '0105', // Temperatura Refrigerante (°C)
+      '0111', // TPS (Acelerador)
+      '010D', // Velocidad km/h
+      '010B', // Presión Colector MAP (kPa)
+      '0111', // TPS (Acelerador)
+      '010D', // Velocidad km/h
+      '0104', // Carga Calculada Motor (%)
+      '0111', // TPS (Acelerador)
+      '010D', // Velocidad km/h
+      '010E', // Avance de Encendido (°)
+      '010F', // Temperatura Admisión IAT (°C)
+      'ATRV', // Voltaje Batería (V)
+    ];
 
     while (_pollingActive && _connected) {
       try {
-        final cycleStart = DateTime.now();
         cycleCount++;
 
-        // 1. PRIORIDAD ALTA: RPM (010C), Velocidad (010D), Acelerador TPS (0111)
-        final rawRpm = await _sendCommandSerialized('010C', timeoutMs: 1200);
-        if (!_pollingActive) break;
+        // -------------------------------------------------------------------
+        // PASO 1: Ráfaga de RPM (2 lecturas consecutivas de 010C1 emitidas al instante)
+        // -------------------------------------------------------------------
+        var ecuReady = true;
+        for (var i = 0; i < 2; i++) {
+          if (!_pollingActive) break;
+          final rawRpm = await _sendCommandSerialized(
+            _pidCmd('010C'),
+            timeoutMs: 900,
+          );
+          responsesInWindow++;
 
-        // Si la ECU reporta UNABLE TO CONNECT o BUS INIT: ERROR (ej. el auto acaba de ponerse en contacto),
-        // dar tiempo para que el ELM327 reinicie el bus sin interrumpirlo.
-        if (rawRpm.contains('UNABLE') || rawRpm.contains('ERROR')) {
-          if (cycleCount % 4 == 1) {
-            _appendLog('Esperando respuesta de ECU (llave en ON)... [$rawRpm]');
+          if (rawRpm.contains('UNABLE') || rawRpm.contains('ERROR')) {
+            ecuReady = false;
+            if (cycleCount % 4 == 1) {
+              _appendLog('Esperando respuesta de ECU (llave en ON)... [$rawRpm]');
+            }
+            final rawVoltsWait =
+                await _sendCommandSerialized('ATRV', timeoutMs: 900);
+            final voltsWait = Sirius34KwpParser.parseVoltage(rawVoltsWait);
+            if (voltsWait != null) {
+              _currentFrame = _currentFrame.copyWith(
+                batteryVolts: voltsWait,
+                timestamp: DateTime.now(),
+              );
+              _emitCurrentFrame();
+            }
+            await Future<void>.delayed(const Duration(milliseconds: 800));
+            break;
           }
-          final rawVoltsWait = await _sendCommandSerialized('ATRV', timeoutMs: 1000);
-          final voltsWait = Sirius34KwpParser.parseVoltage(rawVoltsWait);
-          if (voltsWait != null) {
+
+          final parsedRpm = Sirius34KwpParser.parseRpm(rawRpm);
+          if (parsedRpm != null) {
+            final gear = Sirius34KwpParser.estimateJc5Gear(
+              parsedRpm,
+              _currentFrame.speedKmh,
+            );
+            final vvtOn = _currentFrame.coolantTempC >= 75.0 &&
+                parsedRpm >= 5150.0 &&
+                parsedRpm <= 7100.0 &&
+                _currentFrame.engineLoad >= 50.0;
+
             _currentFrame = _currentFrame.copyWith(
-              batteryVolts: voltsWait,
+              rpm: parsedRpm,
+              estimatedGear: gear,
+              vvtDephaserActive: vvtOn,
+              isSimulator: false,
               timestamp: DateTime.now(),
             );
             _emitCurrentFrame();
           }
-          await Future<void>.delayed(const Duration(milliseconds: 900));
-          continue;
         }
 
-        final rawSpeed = await _sendCommandSerialized('010D', timeoutMs: 1200);
-        final rawTps = await _sendCommandSerialized('0111', timeoutMs: 1200);
-        responsesInWindow += 3;
+        if (!ecuReady || !_pollingActive) continue;
 
-        final parsedRpm = Sirius34KwpParser.parseRpm(rawRpm);
-        final parsedSpeed = Sirius34KwpParser.parseSpeedKmh(rawSpeed);
-        final parsedTps = Sirius34KwpParser.parseThrottleTps(rawTps);
+        // -------------------------------------------------------------------
+        // PASO 2: Leer 1 solo sensor secundario en rotación (sin bloquear RPM)
+        // -------------------------------------------------------------------
+        final nextSecondaryCmd =
+            secondarySchedule[secondarySlotIndex % secondarySchedule.length];
+        secondarySlotIndex++;
 
-        final rpm = parsedRpm ?? _currentFrame.rpm;
-        final speed = parsedSpeed ?? _currentFrame.speedKmh;
-        final tps = parsedTps ?? _currentFrame.throttleTps;
+        final isAtCommand = nextSecondaryCmd.startsWith('AT');
+        final rawSec = await _sendCommandSerialized(
+          isAtCommand ? nextSecondaryCmd : _pidCmd(nextSecondaryCmd),
+          timeoutMs: 900,
+        );
+        responsesInWindow++;
 
+        var speed = _currentFrame.speedKmh;
+        var tps = _currentFrame.throttleTps;
+        var coolant = _currentFrame.coolantTempC;
+        var mapKpa = _currentFrame.intakeMapKpa;
         var load = _currentFrame.engineLoad;
         var advance = _currentFrame.timingAdvance;
-        var mapKpa = _currentFrame.intakeMapKpa;
-        var coolant = _currentFrame.coolantTempC;
         var iat = _currentFrame.intakeAirTempC;
         var volts = _currentFrame.batteryVolts;
 
-        // Emitir actualización inmediata de alta prioridad para agujas fluidas
-        final gear = Sirius34KwpParser.estimateJc5Gear(rpm, speed);
-        final vvtOn =
-            coolant >= 75.0 && rpm >= 5150.0 && rpm <= 7100.0 && load >= 50.0;
-
-        _currentFrame = _currentFrame.copyWith(
-          rpm: rpm,
-          speedKmh: speed,
-          throttleTps: tps,
-          estimatedGear: gear,
-          vvtDephaserActive: vvtOn,
-          isSimulator: false,
-          timestamp: DateTime.now(),
-        );
-        _emitCurrentFrame();
-
-        // 2. PRIORIDAD MEDIA (Cada 1,200 ms)
-        if (cycleStart.difference(lastMediumPoll).inMilliseconds >= 1200) {
-          final rawLoad = await _sendCommandSerialized('0104', timeoutMs: 1200);
-          final rawAdv = await _sendCommandSerialized('010E', timeoutMs: 1200);
-          final rawMap = await _sendCommandSerialized('010B', timeoutMs: 1200);
-          responsesInWindow += 3;
-
-          load = Sirius34KwpParser.parseEngineLoad(rawLoad) ?? load;
-          advance = Sirius34KwpParser.parseTimingAdvance(rawAdv) ?? advance;
-          mapKpa = Sirius34KwpParser.parseMapKpa(rawMap) ?? mapKpa;
-          lastMediumPoll = DateTime.now();
-        }
-
-        // 3. PRIORIDAD BAJA (Cada 3,500 ms, y en el primer ciclo al conectar)
-        if (cycleStart.difference(lastLowPoll).inMilliseconds >= 3500) {
-          final rawCoolant =
-              await _sendCommandSerialized('0105', timeoutMs: 1200);
-          final rawIat = await _sendCommandSerialized('010F', timeoutMs: 1200);
-          final rawVolts =
-              await _sendCommandSerialized('ATRV', timeoutMs: 1200);
-          responsesInWindow += 3;
-
-          coolant =
-              Sirius34KwpParser.parseTemperatureC(rawCoolant, '4105') ?? coolant;
-          iat = Sirius34KwpParser.parseTemperatureC(rawIat, '410F') ?? iat;
-          volts = Sirius34KwpParser.parseVoltage(rawVolts) ?? volts;
-          lastLowPoll = DateTime.now();
+        switch (nextSecondaryCmd) {
+          case '010D':
+            speed = Sirius34KwpParser.parseSpeedKmh(rawSec) ?? speed;
+          case '0111':
+            tps = Sirius34KwpParser.parseThrottleTps(rawSec) ?? tps;
+          case '0105':
+            coolant =
+                Sirius34KwpParser.parseTemperatureC(rawSec, '4105') ?? coolant;
+          case '010B':
+            mapKpa = Sirius34KwpParser.parseMapKpa(rawSec) ?? mapKpa;
+          case '0104':
+            load = Sirius34KwpParser.parseEngineLoad(rawSec) ?? load;
+          case '010E':
+            advance = Sirius34KwpParser.parseTimingAdvance(rawSec) ?? advance;
+          case '010F':
+            iat = Sirius34KwpParser.parseTemperatureC(rawSec, '410F') ?? iat;
+          case 'ATRV':
+            volts = Sirius34KwpParser.parseVoltage(rawSec) ?? volts;
         }
 
         final elapsedWindowMs =
@@ -550,13 +600,17 @@ class RealElm327BluetoothDataSource implements ObdDataSource {
         if (elapsedWindowMs >= 1000) {
           kLineHz = ((responsesInWindow * 1000) / elapsedWindowMs)
               .round()
-              .clamp(1, 20);
+              .clamp(1, 25);
           responsesInWindow = 0;
           windowStart = DateTime.now();
         }
 
+        final rpm = _currentFrame.rpm;
+        final gear = Sirius34KwpParser.estimateJc5Gear(rpm, speed);
+        final vvtOn =
+            coolant >= 75.0 && rpm >= 5150.0 && rpm <= 7100.0 && load >= 50.0;
+
         _currentFrame = _currentFrame.copyWith(
-          rpm: rpm,
           speedKmh: speed,
           throttleTps: tps,
           engineLoad: load,
@@ -573,14 +627,14 @@ class RealElm327BluetoothDataSource implements ObdDataSource {
         );
         _emitCurrentFrame();
 
-        if (cycleCount % 6 == 0) {
+        if (cycleCount % 8 == 0) {
           _appendLog(
-            'RX [010C:$rawRpm -> ${rpm.round()} RPM] [010D:${speed}km/h] [Temp:${coolant.toStringAsFixed(0)}°C] [${volts.toStringAsFixed(1)}V]',
+            'K-Line (${kLineHz}Hz) -> ${rpm.round()} RPM | ${speed}km/h | TPS:${tps.toStringAsFixed(0)}% | ${coolant.toStringAsFixed(0)}°C | ${volts.toStringAsFixed(1)}V',
           );
         }
       } catch (e) {
         _appendLog('Reintentando lectura K-Line: $e');
-        await Future<void>.delayed(const Duration(milliseconds: 350));
+        await Future<void>.delayed(const Duration(milliseconds: 250));
       }
     }
   }
