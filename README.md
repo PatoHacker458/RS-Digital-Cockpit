@@ -1,17 +1,14 @@
-# clio_rs_172_cockpit_telemetry_hub
+# RS Digital Cockpit
 
-A new Flutter project.
+Android Car Launcher & Real-Time OBD-II KWP2000 Telemetry Suite for the **Renault Clio II Sport 172 Phase 2 (F4R 736 2.0L 16v / Siemens Sirius 34 ECU)**.
 
-## Getting Started
+## Key Features
+- **COCKPIT:** 120 FPS custom `RenaultSportTachometerWidget` with OEM dynamic shift-light (5,000 RPM cold protection < 75°C / 6,750 RPM warm shift light / 7,250 RPM fuel cut), `GForceBallWidget`, and live K-Line parameters.
+- **TRACK:** Google Maps circuit telemetry with live speed and RPM HUD.
+- **GARAGE:** Maintenance logbook and RS Club Membership pass with Luhn validation.
+- **ACCOUNT:** Firebase Authentication (Email/Password, Google Sign-In, GitHub OAuth), profile photo upload (`Firebase Storage`), and Biometric security lock.
+- **ECU:** Bluetooth Classic (RFCOMM SPP) OBD-II ELM327 adapter selector, Siemens Sirius 34 DTC scanner/clearer, and KWP2000 serial monitor.
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Package & Identifiers
+- **Application Name:** `RS Digital Cockpit`
+- **Package ID:** `com.rs.digital.cockpit`

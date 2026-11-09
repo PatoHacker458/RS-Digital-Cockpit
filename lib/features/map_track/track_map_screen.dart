@@ -4,11 +4,8 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../core/theme/app_theme.dart';
 import 'map_providers.dart';
 
-/// Pantalla de Geolocalización 100% Nativa (`google_maps_flutter`, cero WebViews)
-/// - Estilo de mapa personalizado (Oscuro Sagem / Claro Daylight Cup).
-/// - Posición GPS en vivo del Clio RS 172 y polilínea del recorrido actual.
-/// - Marcadores físicos de "Talleres Especialistas Renault Sport & Pits Oficiales"
-///   y gasolineras de alto octanaje (98 RON).
+/// Apartado **TRACK**:
+/// Mapa nativo Google Maps (`google_maps_flutter`) con telemetría GPS y talleres RS.
 class TrackMapScreen extends ConsumerWidget {
   final bool isCompactPreview;
 
@@ -17,7 +14,6 @@ class TrackMapScreen extends ConsumerWidget {
     this.isCompactPreview = false,
   });
 
-  // Estilo JSON Oscuro "Night Stage Sagem" para Google Maps Nativo
   static const String _darkMapStyleJson = '''
 [
   {"elementType": "geometry", "stylers": [{"color": "#141820"}]},
@@ -37,24 +33,22 @@ class TrackMapScreen extends ConsumerWidget {
     final primary = Theme.of(context).colorScheme.primary;
 
     final markers = <Marker>{
-      // Marcador en vivo del Renault Clio RS 172
       Marker(
-        markerId: const MarkerId('clio_rs_172_live'),
+        markerId: const MarkerId('clio_rs_live'),
         position: mapState.currentGpsPosition,
         infoWindow: const InfoWindow(
-          title: 'RENAULT CLIO II RS 172 PHASE 2 (EN VIVO)',
-          snippet: 'ECU Siemens Sirius 34 // Telemetría GPS Activa',
+          title: 'CLIO RS 172 (GPS)',
+          snippet: 'Posición actual',
         ),
         icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueOrange),
       ),
-      // Marcadores de Talleres Especialistas Renault Sport, Pits y Gasolineras 98 Octanos
       ...mapState.officialPoiMarkers.map(
         (poi) => Marker(
           markerId: MarkerId(poi.id),
           position: poi.position,
           infoWindow: InfoWindow(
             title: poi.title,
-            snippet: '${poi.category} • ${poi.technicalNotes}',
+            snippet: poi.category,
           ),
           icon: BitmapDescriptor.defaultMarkerWithHue(
             poi.category.contains('Gasolinera')
@@ -68,7 +62,7 @@ class TrackMapScreen extends ConsumerWidget {
 
     final polylines = <Polyline>{
       Polyline(
-        polylineId: const PolylineId('clio_rs_track_trace'),
+        polylineId: const PolylineId('rs_track_trace'),
         points: mapState.routePolylinePoints,
         color: primary,
         width: 5,
@@ -79,12 +73,11 @@ class TrackMapScreen extends ConsumerWidget {
       clipBehavior: Clip.antiAlias,
       child: Stack(
         children: [
-          // Mapa 100% Nativo de Google Maps SDK
           GoogleMap(
             initialCameraPosition: CameraPosition(
               target: mapState.currentGpsPosition,
-              zoom: isCompactPreview ? 14.5 : 15.2,
-              tilt: 38.0,
+              zoom: isCompactPreview ? 14.3 : 15.2,
+              tilt: 35.0,
             ),
             style: isDark ? _darkMapStyleJson : null,
             markers: markers,
@@ -95,37 +88,45 @@ class TrackMapScreen extends ConsumerWidget {
             compassEnabled: true,
             mapToolbarEnabled: false,
           ),
-
-          // Cabecera flotante con Cronómetro de Vuelta GPS (Lap Timer)
           Positioned(
-            top: 10,
-            left: 10,
-            right: 10,
+            top: 8,
+            left: 8,
+            right: 8,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                 color: const Color(0xD90F1115),
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: primary.withValues(alpha: 0.6)),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Icon(Icons.satellite_alt_rounded, size: 16, color: primary),
-                      const SizedBox(width: 6),
-                      Text(
-                        'GPS TRACK & PITS RENAULT SPORT',
-                        style: AppTheme.renaultSportHeaderStyle(
-                          fontSize: 12,
-                          color: Colors.white,
+                  Flexible(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.satellite_alt_rounded,
+                          size: 15,
+                          color: primary,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            'GPS TRACK',
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTheme.renaultSportHeaderStyle(
+                              fontSize: 11.5,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   Text(
-                    'LAP ${mapState.lapCount} • ${mapState.currentLapTimeSec.toStringAsFixed(1)}s (BEST ${mapState.bestLapTimeSec}s)',
+                    'LAP ${mapState.lapCount} • ${mapState.currentLapTimeSec.toStringAsFixed(1)}s',
                     style: AppTheme.telemetryNumericStyle(
                       fontSize: 11,
                       color: RenaultSportPalette.oemShiftGreen,
@@ -135,19 +136,18 @@ class TrackMapScreen extends ConsumerWidget {
               ),
             ),
           ),
-
-          // Panel inferior de Talleres Especialistas Renault Sport & Gasolineras 98 RON
           if (!isCompactPreview && mapState.selectedPoi != null)
             Positioned(
-              bottom: 14,
-              left: 14,
-              right: 14,
+              bottom: 12,
+              left: 12,
+              right: 12,
               child: Container(
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: const Color(0xEB141820),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: RenaultSportPalette.siriusLiquidYellow),
+                  borderRadius: BorderRadius.circular(12),
+                  border:
+                      Border.all(color: RenaultSportPalette.siriusLiquidYellow),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -156,50 +156,45 @@ class TrackMapScreen extends ConsumerWidget {
                     Row(
                       children: [
                         const Icon(
-                          Icons.build_circle_rounded,
+                          Icons.location_on_rounded,
+                          size: 18,
                           color: RenaultSportPalette.siriusLiquidYellow,
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 6),
                         Expanded(
                           child: Text(
                             mapState.selectedPoi!.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: AppTheme.renaultSportHeaderStyle(
-                              fontSize: 15,
+                              fontSize: 14,
                               color: Colors.white,
-                            ),
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: primary.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            mapState.selectedPoi!.category,
-                            style: AppTheme.telemetryNumericStyle(
-                              fontSize: 10,
-                              color: primary,
                             ),
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 4),
                     Text(
                       mapState.selectedPoi!.technicalNotes,
-                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white70, fontSize: 11.5),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         children: mapState.officialPoiMarkers.map((poi) {
                           final isSelected = poi.id == mapState.selectedPoi?.id;
                           return Padding(
-                            padding: const EdgeInsets.only(right: 8),
+                            padding: const EdgeInsets.only(right: 6),
                             child: ChoiceChip(
-                              label: Text(poi.title, style: const TextStyle(fontSize: 11)),
+                              visualDensity: VisualDensity.compact,
+                              label: Text(
+                                poi.category,
+                                style: const TextStyle(fontSize: 11),
+                              ),
                               selected: isSelected,
                               onSelected: (_) => mapNotifier.selectPoi(poi),
                             ),
@@ -216,4 +211,3 @@ class TrackMapScreen extends ConsumerWidget {
     );
   }
 }
-

@@ -1,5 +1,6 @@
-package com.renaultsport.clio172_cockpit
+package com.rs.digital.cockpit
 
+import android.Manifest
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -11,6 +12,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -20,17 +23,15 @@ import java.util.UUID
 import java.util.concurrent.Executors
 
 /**
- * MainActivity para Google Pixel Tablet (Android 17 / API 36).
- * Extiende FlutterFragmentActivity para compatibilidad total con Biometría (local_auth)
- * y Pasarela de Pagos (flutter_stripe), además de exponer MethodChannels nativos para:
- * 1) Car Launcher Dock (apertura de Spotify, Waze, Google Maps, YouTube Music y selector Home)
- * 2) Socket Bluetooth Classic RFCOMM (UUID SPP 00001101-0000-1000-8000-00805F9B34FB) hacia ELM327
+ * MainActivity para RS Digital Cockpit (`com.rs.digital.cockpit`).
+ * Soporta Biometría (local_auth), Stripe, Car Launcher Dock y Bluetooth Classic RFCOMM (ELM327).
  */
 class MainActivity : FlutterFragmentActivity() {
 
     companion object {
         private const val LAUNCHER_CHANNEL = "com.renaultsport.clio172/launcher"
         private const val RFCOMM_CHANNEL = "com.renaultsport.clio172/rfcomm"
+        private const val BT_PERMISSION_REQ_CODE = 1720
         private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     }
 
@@ -42,7 +43,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // 1. Canal del Car Launcher (Android 17 Home Screen & Quick App Dock)
+        // 1. Canal del Car Launcher (Accesos directos y ajustes de sistema)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LAUNCHER_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -50,11 +51,10 @@ class MainActivity : FlutterFragmentActivity() {
                         val packageName = call.argument<String>("packageName")
                         val fallbackUrl = call.argument<String>("fallbackUrl")
                         if (packageName == null) {
-                            result.error("INVALID_ARGS", "packageName es requerido", null)
+                            result.error("INVALID_ARGS", "packageName requerido", null)
                             return@setMethodCallHandler
                         }
-                        val launched = launchAppOrFallback(packageName, fallbackUrl)
-                        result.success(launched)
+                        result.success(launchAppOrFallback(packageName, fallbackUrl))
                     }
                     "openHomeLauncherSettings" -> {
                         try {
@@ -63,28 +63,44 @@ class MainActivity : FlutterFragmentActivity() {
                             }
                             startActivity(intent)
                             result.success(true)
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                             result.success(false)
                         }
                     }
-                    "getInstalledCabinApps" -> {
-                        result.success(getInstalledCabinApps())
+                    "openBluetoothSettings" -> {
+                        try {
+                            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (_: Exception) {
+                            result.success(false)
+                        }
                     }
                     else -> result.notImplemented()
                 }
             }
 
-        // 2. Canal Bluetooth Classic RFCOMM nativo para ELM327 (KWP2000 / Siemens Sirius 34)
+        // 2. Canal Bluetooth Classic RFCOMM para Adaptador OBD2 ELM327
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, RFCOMM_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "getPairedDevices" -> {
+                        if (!ensureBluetoothPermissions()) {
+                            result.success(emptyList<Map<String, String>>())
+                            return@setMethodCallHandler
+                        }
                         result.success(getBondedElmDevices())
                     }
                     "connect" -> {
                         val address = call.argument<String>("address")
                         if (address == null) {
-                            result.error("NO_MAC", "Dirección MAC Bluetooth requerida", null)
+                            result.error("NO_MAC", "Dirección MAC requerida", null)
+                            return@setMethodCallHandler
+                        }
+                        if (!ensureBluetoothPermissions()) {
+                            result.error("BT_PERM", "Permiso Bluetooth pendiente", null)
                             return@setMethodCallHandler
                         }
                         ioExecutor.execute {
@@ -123,6 +139,32 @@ class MainActivity : FlutterFragmentActivity() {
             }
     }
 
+    private fun ensureBluetoothPermissions(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val hasConnect = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasScan = ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.BLUETOOTH_SCAN
+            ) == PackageManager.PERMISSION_GRANTED
+
+            if (!hasConnect || !hasScan) {
+                ActivityCompat.requestPermissions(
+                    this,
+                    arrayOf(
+                        Manifest.permission.BLUETOOTH_CONNECT,
+                        Manifest.permission.BLUETOOTH_SCAN
+                    ),
+                    BT_PERMISSION_REQ_CODE
+                )
+                return false
+            }
+        }
+        return true
+    }
+
     private fun launchAppOrFallback(packageName: String, fallbackUrl: String?): Boolean {
         return try {
             val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
@@ -139,42 +181,25 @@ class MainActivity : FlutterFragmentActivity() {
             } else {
                 false
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
-        }
-    }
-
-    private fun getInstalledCabinApps(): List<Map<String, String>> {
-        val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-        }
-        val resolveInfos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.queryIntentActivities(
-                mainIntent,
-                PackageManager.ResolveInfoFlags.of(0L)
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            packageManager.queryIntentActivities(mainIntent, 0)
-        }
-        return resolveInfos.take(24).map { info ->
-            mapOf(
-                "name" to info.loadLabel(packageManager).toString(),
-                "packageName" to info.activityInfo.packageName
-            )
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun getBondedElmDevices(): List<Map<String, String>> {
-        val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
-        val adapter: BluetoothAdapter? = btManager?.adapter
-        val bonded: Set<BluetoothDevice> = adapter?.bondedDevices ?: emptySet()
-        return bonded.map { device ->
-            mapOf(
-                "name" to (device.name ?: "ELM327 OBD-II"),
-                "address" to device.address
-            )
+        return try {
+            val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+            val adapter: BluetoothAdapter? = btManager?.adapter
+            val bonded: Set<BluetoothDevice> = adapter?.bondedDevices ?: emptySet()
+            bonded.map { device ->
+                mapOf(
+                    "name" to (device.name ?: "OBD-II Bluetooth"),
+                    "address" to device.address
+                )
+            }
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 
@@ -182,7 +207,7 @@ class MainActivity : FlutterFragmentActivity() {
     private fun connectRfcommSocket(macAddress: String) {
         closeRfcommSocket()
         val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val adapter = btManager.adapter ?: throw IllegalStateException("Bluetooth no disponible")
+        val adapter = btManager.adapter ?: throw IllegalStateException("Bluetooth apagado")
         val device = adapter.getRemoteDevice(macAddress)
         adapter.cancelDiscovery()
         val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
@@ -193,8 +218,8 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     private fun sendRawElmCommand(cmd: String, timeoutMs: Int): String {
-        val out = outputStream ?: throw IllegalStateException("Socket RFCOMM desconectado")
-        val inp = inputStream ?: throw IllegalStateException("Socket RFCOMM desconectado")
+        val out = outputStream ?: throw IllegalStateException("OBD2 desconectado")
+        val inp = inputStream ?: throw IllegalStateException("OBD2 desconectado")
 
         val payload = "${cmd.trim()}\r".toByteArray(Charsets.US_ASCII)
         out.write(payload)

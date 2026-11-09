@@ -3,9 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../providers/auth_profile_providers.dart';
 
-/// Pantalla Obligatoria de Seguridad:
-/// Bloquea el acceso al Dashboard si `user.emailVerified == false` (en cuentas de correo),
-/// permitiendo reenviar el correo de confirmación y comprobar el estado en vivo.
+/// Pantalla de verificación de correo para cuentas creadas con Email/Contraseña.
 class EmailVerificationScreen extends ConsumerWidget {
   const EmailVerificationScreen({super.key});
 
@@ -19,71 +17,76 @@ class EmailVerificationScreen extends ConsumerWidget {
     return Scaffold(
       body: SafeArea(
         child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560),
-            child: Padding(
-              padding: const EdgeInsets.all(24),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
               child: Card(
                 child: Padding(
-                  padding: const EdgeInsets.all(28),
+                  padding: const EdgeInsets.all(24),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const Icon(
                         Icons.mark_email_unread_rounded,
-                        size: 56,
+                        size: 48,
                         color: RenaultSportPalette.coldEngineAmber,
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 14),
                       Text(
-                        'VERIFICACIÓN DE CORREO OBLIGATORIA',
+                        'VERIFICA TU CORREO',
                         textAlign: TextAlign.center,
                         style: AppTheme.renaultSportHeaderStyle(
-                          fontSize: 22,
+                          fontSize: 20,
                           color: primary,
                         ),
                       ),
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 10),
                       Text(
-                        'Por seguridad de la telemetría en la nube, el acceso al Cockpit del Clio RS 172 está bloqueado porque la cuenta (${profile?.email ?? ''}) tiene emailVerified == false.',
+                        'Enviamos un enlace de confirmación a ${profile?.email ?? 'tu correo'}. Verifícalo para entrar a RS Digital Cockpit.',
                         textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.bodyLarge,
                       ),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 18),
                       if (formState.feedbackMessage != null)
                         Container(
-                          padding: const EdgeInsets.all(12),
-                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.all(10),
+                          margin: const EdgeInsets.only(bottom: 14),
                           decoration: BoxDecoration(
-                            color: RenaultSportPalette.oemShiftGreen.withValues(alpha: 0.15),
+                            color: (formState.isError
+                                    ? RenaultSportPalette.revLimiterRed
+                                    : RenaultSportPalette.oemShiftGreen)
+                                .withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
                             formState.feedbackMessage!,
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: RenaultSportPalette.oemShiftGreen,
-                              fontSize: 13,
+                            style: TextStyle(
+                              color: formState.isError
+                                  ? RenaultSportPalette.revLimiterRed
+                                  : RenaultSportPalette.oemShiftGreen,
+                              fontSize: 12.5,
                             ),
                           ),
                         ),
                       ElevatedButton.icon(
                         onPressed: authNotifier.checkEmailVerificationStatus,
-                        icon: const Icon(Icons.verified_user_rounded),
-                        label: const Text('YA VERIFIQUÉ MI CORREO (COMPROBAR ESTADO)'),
+                        icon: const Icon(Icons.verified_user_rounded, size: 18),
+                        label: const Text('YA VERIFIQUÉ MI CORREO'),
                       ),
                       const SizedBox(height: 10),
                       OutlinedButton.icon(
                         onPressed: authNotifier.resendVerificationEmail,
-                        icon: const Icon(Icons.forward_to_inbox_rounded),
-                        label: const Text('REENVIAR CORREO DE CONFIRMACIÓN'),
+                        icon: const Icon(Icons.forward_to_inbox_rounded, size: 18),
+                        label: const Text('REENVIAR CORREO'),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 8),
                       TextButton.icon(
                         onPressed: authNotifier.signOut,
-                        icon: const Icon(Icons.logout_rounded),
-                        label: const Text('CERRAR SESIÓN / CAMBIAR PROVEEDOR'),
+                        icon: const Icon(Icons.logout_rounded, size: 18),
+                        label: const Text('CERRAR SESIÓN'),
                       ),
                     ],
                   ),
@@ -96,4 +99,3 @@ class EmailVerificationScreen extends ConsumerWidget {
     );
   }
 }
-

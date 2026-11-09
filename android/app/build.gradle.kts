@@ -1,12 +1,11 @@
 plugins {
     id("com.android.application")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
     id("com.google.gms.google-services")
 }
 
 android {
-    namespace = "com.renaultsport.clio172_cockpit"
+    namespace = "com.rs.digital.cockpit"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -17,7 +16,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.renaultsport.clio172_cockpit"
+        applicationId = "com.rs.digital.cockpit"
         minSdk = 26
         targetSdk = 36
         versionCode = flutter.versionCode

@@ -1,65 +1,45 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- ======================================================================= -->
-    <!-- PERMISOS DE RED Y SERVICIOS CLOUD (FIREBASE & GOOGLE MAPS)              -->
-    <!-- ======================================================================= -->
+    <!-- Red y Servicios Cloud -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- ======================================================================= -->
-    <!-- PERMISOS BLUETOOTH CLASSIC (SPP RFCOMM) PARA ANDROID 12 - ANDROID 17    -->
-    <!-- Conector OBD2 ELM327 Original (v1.4b/v1.5/v2.3) -> ECU Sirius 34        -->
-    <!-- ======================================================================= -->
+    <!-- Bluetooth Classic (SPP RFCOMM) para ELM327 -->
     <uses-permission
         android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
     <uses-permission
         android:name="android.permission.BLUETOOTH_ADMIN"
         android:maxSdkVersion="30" />
-
-    <!-- Android 12+ (API 31 a API 36 / Android 17): neverForLocation evita
-         acoplar el escaneo RFCOMM al permiso GPS cuando solo buscamos ELM327 -->
     <uses-permission
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="31" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- ======================================================================= -->
-    <!-- SERVICIOS EN SEGUNDO PLANO (ANDROID 14 - ANDROID 17 API 36)             -->
-    <!-- Mantiene viva la telemetría KWP2000 cuando el piloto abre Waze/Spotify  -->
-    <!-- ======================================================================= -->
+    <!-- Servicios en Segundo Plano y Ubicación GPS -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
-
-    <!-- ======================================================================= -->
-    <!-- GEOLOCALIZACIÓN NATIVA (GOOGLE MAPS & TELEMETRÍA GPS DE CIRCUITO)       -->
-    <!-- ======================================================================= -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- ======================================================================= -->
-    <!-- HARDWARE NATIVO: BIOMETRÍA, SENSORES DE ALTA FRECUENCIA Y NOTIFICACIONES -->
-    <!-- ======================================================================= -->
+    <!-- Sensores, Biometría y Notificaciones -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.HIGH_SAMPLING_RATE_SENSORS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
-
-    <!-- Permiso para listar y lanzar apps de cabina (Spotify, Waze, Maps) en Android 17 -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
 
-    <!-- Características de hardware de la Google Pixel Tablet -->
     <uses-feature
         android:name="android.hardware.bluetooth"
         android:required="false" />
     <uses-feature
-        android:name="android.hardware.Sensor.accelerometer"
+        android:name="android.hardware.sensor.accelerometer"
         android:required="true" />
     <uses-feature
         android:name="android.hardware.sensor.gyroscope"
@@ -68,9 +48,6 @@
         android:name="android.hardware.location.gps"
         android:required="false" />
 
-    <!-- ======================================================================= -->
-    <!-- VISIBILIDAD DE PAQUETES PARA EL DOCK DEL CAR LAUNCHER (ANDROID 17)      -->
-    <!-- ======================================================================= -->
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -84,22 +61,18 @@
 
     <application
         android:name="${applicationName}"
-        android:label="Clio RS 172 Cockpit"
+        android:label="RS Digital Cockpit"
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true"
         android:supportsRtl="true"
         android:hardwareAccelerated="true">
 
-        <!-- =================================================================== -->
-        <!-- GOOGLE MAPS NATIVE SDK API KEY                                      -->
-        <!-- =================================================================== -->
+        <!-- Google Maps Native SDK API Key -->
         <meta-data
             android:name="com.google.android.geo.API_KEY"
-            android:value="AIzaSyD-RENAULT-SPORT-CLIO-172-PIXEL-TABLET-KEY" />
+            android:value="AIzaSyCKar31BqppLi08THzmfjCIVM8C6yyEaSo" />
 
-        <!-- =================================================================== -->
-        <!-- FIREBASE CLOUD MESSAGING (FCM) DEFAULT CHANNEL (ANDROID 17 HIGH PRIO)-->
-        <!-- =================================================================== -->
+        <!-- Firebase Cloud Messaging Default Channel -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="clio_rs_hud_channel" />
@@ -107,10 +80,6 @@
             android:name="com.google.firebase.messaging.default_notification_color"
             android:resource="@android:color/holo_orange_dark" />
 
-        <!-- =================================================================== -->
-        <!-- MAIN ACTIVITY CONFIGURADA COMO ANDROID 17 CAR LAUNCHER (HOME SCREEN)-->
-        <!-- Diseñada para Google Pixel Tablet (2560x1600, 16:10, Multi-Window)  -->
-        <!-- =================================================================== -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -119,7 +88,6 @@
             android:clearTaskOnLaunch="true"
             android:excludeFromRecents="false"
             android:resizeableActivity="true"
-            android:screenOrientation="sensorLandscape"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">
@@ -128,7 +96,6 @@
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
-            <!-- Intent Filter Estándar + Categorías HOME y DEFAULT para Launcher -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -144,4 +111,3 @@
             android:value="2" />
     </application>
 </manifest>
-

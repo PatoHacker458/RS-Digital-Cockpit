@@ -17,122 +17,59 @@ import '../telemetry/widgets/renault_sport_tachometer_widget.dart';
 import 'widgets/dtc_diagnostic_sheet.dart';
 import 'widgets/launcher_dock_widget.dart';
 
-/// Dashboard Principal Responsivo del "Clio RS 172 Cockpit & Telemetry Hub".
-/// - Ancho >= 840px (Google Pixel Tablet 2560x1600 en horizontal):
-///   Dashboard apaisado de 3 columnas con tacómetro central gigante, telemetría
-///   lateral KWP2000, fuerzas G, mini-mapa nativo y dock inferior de Car Launcher.
-/// - Ancho < 840px (Modo Móvil):
-///   Navegación inferior compacta con pestañas apiladas para usar desde el teléfono.
-/// Cumplimiento estricto: Gestión 100% reactiva en Riverpod.
+/// Pantalla Principal de **RS Digital Cockpit**.
+/// Diseño 100% responsivo para tablets y teléfonos, libre de desbordamientos.
 class CockpitDashboardScreen extends ConsumerWidget {
   const CockpitDashboardScreen({super.key});
-
-  void _openDtcModal(BuildContext context) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (_) => const SizedBox(
-        height: 520,
-        child: DtcDiagnosticSheet(),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final telemetryAsync = ref.watch(obdTelemetryStreamProvider);
-    final frame = telemetryAsync.valueOrNull ?? ObdTelemetryFrame.initial();
+    final frame = telemetryAsync.valueOrNull ??
+        ObdTelemetryFrame.initial(isSimulator: false);
     final activeTab = ref.watch(cockpitTabProvider);
 
     return Scaffold(
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final isTabletCockpit = constraints.maxWidth >= 840;
+            final isTabletLandscape =
+                constraints.maxWidth >= 840 && constraints.maxHeight >= 480;
 
-            if (isTabletCockpit) {
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-                child: Column(
-                  children: [
-                    // 1. Cabecera Superior de Telemetría, Switch Simulador/ELM327 y Avatar
-                    _CockpitTopHeaderBar(frame: frame),
-                    const SizedBox(height: 10),
+            return Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: isTabletLandscape ? 14 : 10,
+                vertical: 8,
+              ),
+              child: Column(
+                children: [
+                  // 1. Barra Superior Compacta
+                  _CockpitTopHeaderBar(frame: frame),
+                  const SizedBox(height: 8),
 
-                    // 2. Cuerpo Principal según pestaña activa en el Dock
-                    Expanded(
-                      child: switch (activeTab) {
-                        CockpitSectionTab.cockpitHud => _TabletThreeColumnCockpitView(
-                            frame: frame,
-                          ),
-                        CockpitSectionTab.trackMapGps => const TrackMapScreen(
-                            isCompactPreview: false,
-                          ),
-                        CockpitSectionTab.digitalGarage => const DigitalGarageScreen(),
-                        CockpitSectionTab.pilotProfile => const PilotProfileScreen(),
-                      },
-                    ),
-                    const SizedBox(height: 10),
-
-                    // 3. Dock Inferior de Android 17 Car Launcher
-                    LauncherDockWidget(
-                      onOpenDtcScanner: () => _openDtcModal(context),
-                    ),
-                  ],
-                ),
-              );
-            }
-
-            // MODO MÓVIL COMPACTO (< 840px)
-            return Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: _CockpitTopHeaderBar(frame: frame, isCompact: true),
-                ),
-                Expanded(
-                  child: switch (activeTab) {
-                    CockpitSectionTab.cockpitHud => SingleChildScrollView(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Column(
-                          children: [
-                            SizedBox(
-                              height: 360,
-                              child: RenaultSportTachometerWidget(frame: frame),
-                            ),
-                            const SizedBox(height: 12),
-                            _Sirius34TelemetryColumn(frame: frame),
-                            const SizedBox(height: 12),
-                            const SizedBox(height: 280, child: GForceBallWidget()),
-                          ],
+                  // 2. Contenido Principal Responsivo
+                  Expanded(
+                    child: switch (activeTab) {
+                      CockpitSectionTab.cockpitHud => isTabletLandscape
+                          ? _TabletThreeColumnCockpitView(frame: frame)
+                          : _CompactScrollableCockpitView(frame: frame),
+                      CockpitSectionTab.trackMapGps => const TrackMapScreen(
+                          isCompactPreview: false,
                         ),
-                      ),
-                    CockpitSectionTab.trackMapGps => const TrackMapScreen(
-                        isCompactPreview: false,
-                      ),
-                    CockpitSectionTab.digitalGarage => const DigitalGarageScreen(),
-                    CockpitSectionTab.pilotProfile => const PilotProfileScreen(),
-                  },
-                ),
-                NavigationBar(
-                  selectedIndex: CockpitSectionTab.values.indexOf(activeTab),
-                  onDestinationSelected: (idx) => ref
-                      .read(cockpitTabProvider.notifier)
-                      .selectTab(CockpitSectionTab.values[idx]),
-                  destinations: CockpitSectionTab.values
-                      .map(
-                        (t) => NavigationDestination(
-                          icon: Icon(t.icon),
-                          label: t.label,
-                        ),
-                      )
-                      .toList(),
-                ),
-              ],
+                      CockpitSectionTab.digitalGarage =>
+                        const DigitalGarageScreen(),
+                      CockpitSectionTab.pilotProfile =>
+                        const PilotProfileScreen(),
+                      CockpitSectionTab.ecuDiagnostics =>
+                        const DtcDiagnosticSheet(),
+                    },
+                  ),
+                  const SizedBox(height: 8),
+
+                  // 3. Dock Inferior Unificado (COCKPIT, TRACK, GARAGE, ACCOUNT, ECU + Logos Apps)
+                  const LauncherDockWidget(),
+                ],
+              ),
             );
           },
         ),
@@ -143,239 +80,230 @@ class CockpitDashboardScreen extends ConsumerWidget {
 
 class _CockpitTopHeaderBar extends ConsumerWidget {
   final ObdTelemetryFrame frame;
-  final bool isCompact;
 
-  const _CockpitTopHeaderBar({
-    required this.frame,
-    this.isCompact = false,
-  });
+  const _CockpitTopHeaderBar({required this.frame});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final connectionMode = ref.watch(obdConnectionModeProvider);
+    final adapterState = ref.watch(obdConnectionModeProvider);
     final obdNotifier = ref.read(obdConnectionModeProvider.notifier);
     final themeMode = ref.watch(themeModeProvider);
     final immobilizer = ref.watch(biometricImmobilizerProvider);
     final profile = ref.watch(pilotAuthProvider);
     final primary = Theme.of(context).colorScheme.primary;
-    final isSimulator = connectionMode == ObdConnectionMode.trackSimulator;
+    final isSimulator = adapterState.mode == ObdConnectionMode.trackSimulator;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: primary.withValues(alpha: 0.45),
-          width: 1.2,
+          color: primary.withValues(alpha: 0.4),
+          width: 1.1,
         ),
       ),
-      child: Wrap(
-        spacing: 14,
-        runSpacing: 8,
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
+      child: Row(
         children: [
-          // Identificador Oficial Renault Sport Clio 172 Fase 2
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: primary,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  'RS 172',
-                  style: AppTheme.renaultSportHeaderStyle(
-                    fontSize: 15,
-                    color: Theme.of(context).colorScheme.onPrimary,
-                  ),
-                ),
+          // Marca RS Digital Cockpit
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: primary,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              'RS',
+              style: AppTheme.renaultSportHeaderStyle(
+                fontSize: 14,
+                color: Theme.of(context).colorScheme.onPrimary,
               ),
-              const SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'CLIO II SPORT 2.0 16V // SIEMENS SIRIUS 34',
-                    style: AppTheme.renaultSportHeaderStyle(
-                      fontSize: isCompact ? 13 : 15,
-                      color: Theme.of(context).colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'RS DIGITAL COCKPIT',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTheme.renaultSportHeaderStyle(
+                fontSize: 15,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+
+          // Controles rápidos alineados a la derecha
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Botón de Estado OBD2 (Lleva a la pestaña ECU para elegir adaptador)
+                InkWell(
+                  onTap: () => ref
+                      .read(cockpitTabProvider.notifier)
+                      .selectTab(CockpitSectionTab.ecuDiagnostics),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: (adapterState.isConnected
+                              ? RenaultSportPalette.oemShiftGreen
+                              : RenaultSportPalette.siriusLiquidYellow)
+                          .withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: adapterState.isConnected
+                            ? RenaultSportPalette.oemShiftGreen
+                            : RenaultSportPalette.siriusLiquidYellow,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          isSimulator
+                              ? Icons.sports_motorsports_rounded
+                              : (adapterState.isConnected
+                                  ? Icons.bluetooth_connected_rounded
+                                  : Icons.bluetooth_searching_rounded),
+                          size: 15,
+                          color: adapterState.isConnected
+                              ? RenaultSportPalette.oemShiftGreen
+                              : RenaultSportPalette.siriusLiquidYellow,
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          isSimulator
+                              ? 'SIMULADOR'
+                              : (adapterState.isConnected
+                                  ? (adapterState.selectedDeviceName ?? 'OBD2 OK')
+                                  : 'CONECTAR OBD2'),
+                          style: AppTheme.telemetryNumericStyle(
+                            fontSize: 11,
+                            color: adapterState.isConnected
+                                ? RenaultSportPalette.oemShiftGreen
+                                : RenaultSportPalette.siriusLiquidYellow,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  Text(
-                    '${frame.activeProtocol} • K-Line ${frame.kLineHz} Hz',
-                    style: AppTheme.telemetryNumericStyle(
-                      fontSize: 11,
-                      color: RenaultSportPalette.oemShiftGreen,
+                ),
+
+                if (isSimulator) ...[
+                  const SizedBox(width: 8),
+                  InkWell(
+                    onTap: obdNotifier.toggleSimulatorEngineWarmth,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: (frame.isEngineCold
+                                ? RenaultSportPalette.coldEngineAmber
+                                : RenaultSportPalette.oemShiftGreen)
+                            .withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: frame.isEngineCold
+                              ? RenaultSportPalette.coldEngineAmber
+                              : RenaultSportPalette.oemShiftGreen,
+                        ),
+                      ),
+                      child: Text(
+                        '${frame.coolantTempC.toStringAsFixed(0)}°C',
+                        style: AppTheme.telemetryNumericStyle(
+                          fontSize: 11,
+                          color: frame.isEngineCold
+                              ? RenaultSportPalette.coldEngineAmber
+                              : RenaultSportPalette.oemShiftGreen,
+                        ),
+                      ),
                     ),
                   ),
                 ],
-              ),
-            ],
-          ),
 
-          // Controles en Caliente: Switch Simulador/Bluetooth, Temp Frío/Caliente, Biometría y Tema
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              // 1. Switch Polimórfico en Caliente: Simulador de Pista vs ELM327 Bluetooth Real
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: (isSimulator
-                          ? RenaultSportPalette.siriusLiquidYellow
-                          : RenaultSportPalette.oemShiftGreen)
-                      .withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: isSimulator
-                        ? RenaultSportPalette.siriusLiquidYellow
-                        : RenaultSportPalette.oemShiftGreen,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      isSimulator
-                          ? Icons.sports_motorsports_rounded
-                          : Icons.bluetooth_connected_rounded,
-                      size: 16,
-                      color: isSimulator
-                          ? RenaultSportPalette.siriusLiquidYellow
-                          : RenaultSportPalette.oemShiftGreen,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      isSimulator ? 'SIMULADOR PISTA' : 'ELM327 RFCOMM',
-                      style: AppTheme.telemetryNumericStyle(
-                        fontSize: 11,
-                        color: isSimulator
-                            ? RenaultSportPalette.siriusLiquidYellow
-                            : RenaultSportPalette.oemShiftGreen,
-                      ),
-                    ),
-                    Switch(
-                      value: !isSimulator,
-                      onChanged: (useRealBt) {
-                        obdNotifier.setConnectionMode(
-                          useRealBt
-                              ? ObdConnectionMode.realElm327Bluetooth
-                              : ObdConnectionMode.trackSimulator,
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
+                const SizedBox(width: 6),
 
-              // 2. Botón para conmutar en vivo Motor Frío (<75°C) vs Caliente (>=75°C) en clase
-              if (isSimulator)
-                ActionChip(
-                  avatar: Icon(
-                    Icons.thermostat_rounded,
-                    size: 16,
-                    color: frame.isEngineCold
-                        ? RenaultSportPalette.coldEngineAmber
-                        : RenaultSportPalette.oemShiftGreen,
-                  ),
-                  label: Text(
-                    frame.isEngineCold
-                        ? 'FRÍO ${frame.coolantTempC.toStringAsFixed(0)}°C (5K RPM)'
-                        : 'CALIENTE ${frame.coolantTempC.toStringAsFixed(0)}°C (6.75K RPM)',
-                    style: AppTheme.telemetryNumericStyle(
-                      fontSize: 11,
-                      color: frame.isEngineCold
-                          ? RenaultSportPalette.coldEngineAmber
-                          : RenaultSportPalette.oemShiftGreen,
-                    ),
-                  ),
-                  onPressed: obdNotifier.toggleSimulatorEngineWarmth,
-                ),
-
-              // 3. Inmovilizador Biométrico (`local_auth`)
-              ActionChip(
-                avatar: Icon(
-                  immobilizer.isImmobilizerUnlocked
-                      ? Icons.fingerprint_rounded
-                      : Icons.lock_outline_rounded,
-                  size: 16,
-                  color: immobilizer.isImmobilizerUnlocked
-                      ? RenaultSportPalette.oemShiftGreen
-                      : RenaultSportPalette.revLimiterRed,
-                ),
-                label: Text(
-                  immobilizer.isImmobilizerUnlocked ? 'TRACK UNLOCKED' : 'INMOVILIZADOR',
-                  style: AppTheme.telemetryNumericStyle(
-                    fontSize: 11,
+                // Biometría
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Inmovilizador Biométrico',
+                  onPressed: () {
+                    final bio = ref.read(biometricImmobilizerProvider.notifier);
+                    if (immobilizer.isImmobilizerUnlocked) {
+                      bio.lockImmobilizer();
+                    } else {
+                      bio.authenticateDriver();
+                    }
+                  },
+                  icon: Icon(
+                    immobilizer.isImmobilizerUnlocked
+                        ? Icons.fingerprint_rounded
+                        : Icons.lock_outline_rounded,
+                    size: 20,
                     color: immobilizer.isImmobilizerUnlocked
                         ? RenaultSportPalette.oemShiftGreen
                         : RenaultSportPalette.revLimiterRed,
                   ),
                 ),
-                onPressed: () {
-                  final bio = ref.read(biometricImmobilizerProvider.notifier);
-                  if (immobilizer.isImmobilizerUnlocked) {
-                    bio.lockImmobilizer();
-                  } else {
-                    bio.authenticateDriver();
-                  }
-                },
-              ),
 
-              // 4. Conmutador de Tema Dinámico (Night Stage Sagem vs Daylight Cup Mondial Blue)
-              IconButton.outlined(
-                tooltip: 'Cambiar Tema: Night Stage (Oscuro) / Daylight Cup (Claro)',
-                onPressed: () => ref.read(themeModeProvider.notifier).toggleTheme(),
-                icon: Icon(
-                  themeMode == ThemeMode.dark
-                      ? Icons.wb_sunny_rounded
-                      : Icons.nightlight_round,
-                  color: primary,
-                ),
-              ),
-
-              // 5. Avatar del Piloto Sincronizado Dinámicamente (CachedNetworkImage + Offline)
-              if (profile != null)
-                InkWell(
-                  onTap: () => ref
-                      .read(cockpitTabProvider.notifier)
-                      .selectTab(CockpitSectionTab.pilotProfile),
-                  borderRadius: BorderRadius.circular(24),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircleAvatar(
-                        radius: 18,
-                        backgroundColor: primary,
-                        child: ClipOval(
-                          child: profile.localAvatarPath != null &&
-                                  File(profile.localAvatarPath!).existsSync()
-                              ? Image.file(
-                                  File(profile.localAvatarPath!),
-                                  width: 34,
-                                  height: 34,
-                                  fit: BoxFit.cover,
-                                )
-                              : CachedNetworkImage(
-                                  imageUrl: profile.avatarUrl,
-                                  width: 34,
-                                  height: 34,
-                                  fit: BoxFit.cover,
-                                  errorWidget: (_, __, ___) =>
-                                      const Icon(Icons.person, size: 18),
-                                ),
-                        ),
-                      ),
-                    ],
+                // Tema Oscuro / Claro
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Cambiar Tema',
+                  onPressed: () =>
+                      ref.read(themeModeProvider.notifier).toggleTheme(),
+                  icon: Icon(
+                    themeMode == ThemeMode.dark
+                        ? Icons.wb_sunny_rounded
+                        : Icons.nightlight_round,
+                    size: 19,
+                    color: primary,
                   ),
                 ),
-            ],
+
+                // Avatar del Piloto
+                if (profile != null) ...[
+                  const SizedBox(width: 4),
+                  InkWell(
+                    onTap: () => ref
+                        .read(cockpitTabProvider.notifier)
+                        .selectTab(CockpitSectionTab.pilotProfile),
+                    customBorder: const CircleBorder(),
+                    child: CircleAvatar(
+                      radius: 15,
+                      backgroundColor: primary,
+                      child: ClipOval(
+                        child: profile.localAvatarPath != null &&
+                                File(profile.localAvatarPath!).existsSync()
+                            ? Image.file(
+                                File(profile.localAvatarPath!),
+                                width: 28,
+                                height: 28,
+                                fit: BoxFit.cover,
+                              )
+                            : CachedNetworkImage(
+                                imageUrl: profile.avatarUrl,
+                                width: 28,
+                                height: 28,
+                                fit: BoxFit.cover,
+                                errorWidget: (_, __, ___) =>
+                                    const Icon(Icons.person, size: 16),
+                              ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ],
       ),
@@ -393,26 +321,26 @@ class _TabletThreeColumnCockpitView extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // COLUMNA IZQUIERDA (Flex 3): Cola de Prioridad KWP2000 & Blackbox Firebase Sync
+        // Columna Izquierda: Sensores K-Line + Blackbox Cloud
         Expanded(
           flex: 3,
           child: _Sirius34TelemetryColumn(frame: frame),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 10),
 
-        // COLUMNA CENTRAL (Flex 5): Tacómetro Sagem 120 FPS + Barra LED Shift-Light
+        // Columna Central: Tacómetro 120 FPS
         Expanded(
           flex: 5,
           child: Card(
             child: Padding(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(12),
               child: RenaultSportTachometerWidget(frame: frame),
             ),
           ),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 10),
 
-        // COLUMNA DERECHA (Flex 3): Medidor G-Force Nativo + Mini-Mapa GPS Nativo
+        // Columna Derecha: G-Force + Mini Mapa GPS
         const Expanded(
           flex: 3,
           child: Column(
@@ -421,7 +349,7 @@ class _TabletThreeColumnCockpitView extends StatelessWidget {
                 flex: 5,
                 child: GForceBallWidget(),
               ),
-              SizedBox(height: 10),
+              SizedBox(height: 8),
               Expanded(
                 flex: 5,
                 child: TrackMapScreen(isCompactPreview: true),
@@ -434,10 +362,51 @@ class _TabletThreeColumnCockpitView extends StatelessWidget {
   }
 }
 
-class _Sirius34TelemetryColumn extends ConsumerWidget {
+class _CompactScrollableCockpitView extends StatelessWidget {
   final ObdTelemetryFrame frame;
 
-  const _Sirius34TelemetryColumn({required this.frame});
+  const _CompactScrollableCockpitView({required this.frame});
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          SizedBox(
+            height: 310,
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: RenaultSportTachometerWidget(frame: frame),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          _Sirius34TelemetryColumn(frame: frame, isScrollableMode: true),
+          const SizedBox(height: 10),
+          const SizedBox(
+            height: 250,
+            child: GForceBallWidget(),
+          ),
+          const SizedBox(height: 10),
+          const SizedBox(
+            height: 240,
+            child: TrackMapScreen(isCompactPreview: true),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Sirius34TelemetryColumn extends ConsumerWidget {
+  final ObdTelemetryFrame frame;
+  final bool isScrollableMode;
+
+  const _Sirius34TelemetryColumn({
+    required this.frame,
+    this.isScrollableMode = false,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -445,156 +414,171 @@ class _Sirius34TelemetryColumn extends ConsumerWidget {
     final blackboxRecords = ref.watch(blackboxRealtimeProvider);
     final primary = Theme.of(context).colorScheme.primary;
 
-    return Column(
-      children: [
-        // Tarjeta de Parámetros de la Cola de Prioridad KWP2000
-        Expanded(
-          flex: 6,
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'TELEMETRÍA K-LINE SIRIUS 34',
-                    style: AppTheme.renaultSportHeaderStyle(
-                      fontSize: 14,
-                      color: primary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: GridView.count(
-                      crossAxisCount: 2,
-                      mainAxisSpacing: 8,
-                      crossAxisSpacing: 8,
-                      childAspectRatio: 1.65,
-                      physics: const NeverScrollableScrollPhysics(),
-                      children: [
-                        _KwpMetricTile(
-                          pidCode: '0105 (LOW)',
-                          label: 'REFRIGERANTE',
-                          value: '${frame.coolantTempC.toStringAsFixed(1)} °C',
-                          valueColor: frame.isEngineCold
-                              ? RenaultSportPalette.coldEngineAmber
-                              : RenaultSportPalette.oemShiftGreen,
-                        ),
-                        _KwpMetricTile(
-                          pidCode: '0111 (HIGH)',
-                          label: 'MARIPOSA TPS',
-                          value: '${frame.throttleTps.toStringAsFixed(1)} %',
-                          valueColor: primary,
-                        ),
-                        _KwpMetricTile(
-                          pidCode: '010B (MED)',
-                          label: 'COLECTOR MAP',
-                          value: '${frame.intakeMapKpa} kPa',
-                          valueColor: RenaultSportPalette.siriusLiquidYellow,
-                        ),
-                        _KwpMetricTile(
-                          pidCode: '010E (MED)',
-                          label: 'AVANCE ENC.',
-                          value: '${frame.timingAdvance.toStringAsFixed(1)}°',
-                          valueColor: RenaultSportPalette.oemShiftGreen,
-                        ),
-                        _KwpMetricTile(
-                          pidCode: '0104 (MED)',
-                          label: 'CARGA MOTOR',
-                          value: '${frame.engineLoad.toStringAsFixed(0)} %',
-                          valueColor: primary,
-                        ),
-                        _KwpMetricTile(
-                          pidCode: 'ATRV / 010F',
-                          label: 'VOLTS / IAT',
-                          value:
-                              '${frame.batteryVolts.toStringAsFixed(1)}V • ${frame.intakeAirTempC.toStringAsFixed(0)}°C',
-                          valueColor: Colors.cyanAccent,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+    final metricsGrid = Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'PARÁMETROS MOTOR F4R',
+              style: AppTheme.renaultSportHeaderStyle(
+                fontSize: 13,
+                color: primary,
               ),
             ),
-          ),
+            const SizedBox(height: 8),
+            GridView.count(
+              crossAxisCount: 2,
+              mainAxisSpacing: 6,
+              crossAxisSpacing: 6,
+              childAspectRatio: 2.1,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              children: [
+                _KwpMetricTile(
+                  label: 'TEMP MOTOR',
+                  value: '${frame.coolantTempC.toStringAsFixed(0)} °C',
+                  valueColor: frame.isEngineCold
+                      ? RenaultSportPalette.coldEngineAmber
+                      : RenaultSportPalette.oemShiftGreen,
+                ),
+                _KwpMetricTile(
+                  label: 'ACELERADOR',
+                  value: '${frame.throttleTps.toStringAsFixed(0)} %',
+                  valueColor: primary,
+                ),
+                _KwpMetricTile(
+                  label: 'PRESIÓN MAP',
+                  value: '${frame.intakeMapKpa} kPa',
+                  valueColor: RenaultSportPalette.siriusLiquidYellow,
+                ),
+                _KwpMetricTile(
+                  label: 'AVANCE',
+                  value: '${frame.timingAdvance.toStringAsFixed(1)}°',
+                  valueColor: RenaultSportPalette.oemShiftGreen,
+                ),
+                _KwpMetricTile(
+                  label: 'CARGA ECU',
+                  value: '${frame.engineLoad.toStringAsFixed(0)} %',
+                  valueColor: primary,
+                ),
+                _KwpMetricTile(
+                  label: 'BATERÍA / IAT',
+                  value:
+                      '${frame.batteryVolts.toStringAsFixed(1)}V • ${frame.intakeAirTempC.toStringAsFixed(0)}°C',
+                  valueColor: Colors.cyanAccent,
+                ),
+              ],
+            ),
+          ],
         ),
-        const SizedBox(height: 10),
+      ),
+    );
 
-        // Tarjeta "Blackbox Live" (Firebase Realtime Database Sync)
-        Expanded(
-          flex: 4,
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'FIREBASE BLACKBOX LIVE',
-                        style: AppTheme.renaultSportHeaderStyle(
-                          fontSize: 13,
-                          color: RenaultSportPalette.siriusLiquidYellow,
-                        ),
-                      ),
-                      Text(
-                        '${blackboxRecords.length} SESIONES CLOUD',
-                        style: AppTheme.telemetryNumericStyle(
-                          fontSize: 10,
-                          color: RenaultSportPalette.oemShiftGreen,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _PeakStatColumn(
-                        label: 'PEAK RPM',
-                        value: '${sessionStats.peakRpm.round()}',
-                      ),
-                      _PeakStatColumn(
-                        label: 'MAX SPEED',
-                        value: '${sessionStats.maxSpeedKmh} km/h',
-                      ),
-                      _PeakStatColumn(
-                        label: '0-100 KM/H',
-                        value: '${sessionStats.bestZeroToHundredSec ?? 6.85}s',
-                      ),
-                    ],
-                  ),
-                  ElevatedButton.icon(
-                    onPressed: () => ref
-                        .read(blackboxRealtimeProvider.notifier)
-                        .syncCurrentSessionToCloud(),
-                    icon: const Icon(Icons.cloud_upload_rounded, size: 17),
-                    label: const Text(
-                      'SINCRONIZAR TELEMETRÍA EN FIREBASE',
-                      style: TextStyle(fontSize: 11.5),
+    final blackboxCard = Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Flexible(
+                  child: Text(
+                    'BLACKBOX CLOUD',
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.renaultSportHeaderStyle(
+                      fontSize: 12.5,
+                      color: RenaultSportPalette.siriusLiquidYellow,
                     ),
+                  ),
+                ),
+                Text(
+                  '${blackboxRecords.length} GUARDADAS',
+                  style: AppTheme.telemetryNumericStyle(
+                    fontSize: 10,
+                    color: RenaultSportPalette.oemShiftGreen,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _PeakStatColumn(
+                    label: 'PEAK RPM',
+                    value: '${sessionStats.peakRpm.round()}',
+                  ),
+                  const SizedBox(width: 18),
+                  _PeakStatColumn(
+                    label: 'MAX KM/H',
+                    value: '${sessionStats.maxSpeedKmh}',
+                  ),
+                  const SizedBox(width: 18),
+                  _PeakStatColumn(
+                    label: '0-100 KM/H',
+                    value: '${sessionStats.bestZeroToHundredSec ?? 6.8}s',
                   ),
                 ],
               ),
             ),
-          ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 36,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                ),
+                onPressed: () => ref
+                    .read(blackboxRealtimeProvider.notifier)
+                    .syncCurrentSessionToCloud(),
+                icon: const Icon(Icons.cloud_upload_rounded, size: 16),
+                label: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('GUARDAR SESIÓN'),
+                ),
+              ),
+            ),
+          ],
         ),
-      ],
+      ),
+    );
+
+    if (isScrollableMode) {
+      return Column(
+        children: [
+          metricsGrid,
+          const SizedBox(height: 8),
+          blackboxCard,
+        ],
+      );
+    }
+
+    return SingleChildScrollView(
+      child: Column(
+        children: [
+          metricsGrid,
+          const SizedBox(height: 8),
+          blackboxCard,
+        ],
+      ),
     );
   }
 }
 
 class _KwpMetricTile extends StatelessWidget {
-  final String pidCode;
   final String label;
   final String value;
   final Color valueColor;
 
   const _KwpMetricTile({
-    required this.pidCode,
     required this.label,
     required this.value,
     required this.valueColor,
@@ -603,38 +587,32 @@ class _KwpMetricTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: Colors.black26,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.white12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                label,
-                style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700),
-              ),
-              Text(
-                pidCode,
-                style: AppTheme.telemetryNumericStyle(
-                  fontSize: 8.5,
-                  color: Colors.white54,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 2),
           Text(
-            value,
-            style: AppTheme.telemetryNumericStyle(
-              fontSize: 15,
-              color: valueColor,
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 1),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: AppTheme.telemetryNumericStyle(
+                fontSize: 14,
+                color: valueColor,
+              ),
             ),
           ),
         ],
@@ -655,12 +633,13 @@ class _PeakStatColumn extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(label, style: const TextStyle(fontSize: 9.5)),
+        Text(label, style: const TextStyle(fontSize: 9)),
         Text(
           value,
           style: AppTheme.telemetryNumericStyle(
-            fontSize: 14,
+            fontSize: 13.5,
             color: RenaultSportPalette.oemShiftGreen,
           ),
         ),
