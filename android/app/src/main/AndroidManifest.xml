@@ -107,6 +107,17 @@
             </intent-filter>
         </activity>
 
+        <!-- Servicio nativo para leer la sesión multimedia activa de Android (Carátula, Canción, Artista, Progreso) -->
+        <service
+            android:name=".RsMediaNotificationListenerService"
+            android:label="RS Digital Cockpit Media"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
