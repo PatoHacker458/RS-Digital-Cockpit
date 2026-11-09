@@ -6,21 +6,31 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
+import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ApplicationInfo
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.media.AudioManager
+import android.media.MediaMetadata
+import android.media.session.MediaController
+import android.media.session.MediaSessionManager
+import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
 import android.provider.Settings
+import android.service.notification.NotificationListenerService
 import android.view.KeyEvent
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
@@ -28,9 +38,15 @@ import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
 /**
+ * Servicio puente del sistema Android para permitir que `MediaSessionManager`
+ * lea la carátula (Bitmap), canción, artista y progreso del reproductor activo.
+ */
+class RsMediaNotificationListenerService : NotificationListenerService()
+
+/**
  * MainActivity para RS Digital Cockpit (`com.rs.digital.cockpit`).
- * Soporta Biometría (local_auth), Stripe, Car Launcher Dock, Control Multimedia/Volumen
- * estilo Android Auto (`AudioManager`) y Bluetooth Classic RFCOMM (ELM327).
+ * Soporta Biometría (local_auth), Stripe, Car Launcher Dock, Lector del Reproductor
+ * Multimedia del Sistema Android (`MediaSessionManager` + `AudioManager`) y Bluetooth Classic RFCOMM (ELM327).
  */
 class MainActivity : FlutterFragmentActivity() {
 
@@ -47,10 +63,83 @@ class MainActivity : FlutterFragmentActivity() {
     private val ioExecutor = Executors.newSingleThreadExecutor()
     private val ioLock = Any()
 
+    // Caché ligera de carátula para no recomprimir el mismo Bitmap en cada ciclo
+    private var cachedArtworkKey: String = ""
+    private var cachedArtworkBytes: ByteArray? = null
+
+    // Fallback por Broadcast para reproductores (Spotify / Android Music)
+    private var broadcastTitle: String? = null
+    private var broadcastArtist: String? = null
+    private var broadcastAlbum: String? = null
+    private var broadcastDurationMs: Long = 0L
+    private var broadcastPositionMs: Long = 0L
+    private var broadcastPositionTimestamp: Long = 0L
+    private var broadcastIsPlaying: Boolean = false
+    private var broadcastPackage: String? = null
+
+    private val mediaBroadcastReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent == null) return
+            val action = intent.action ?: ""
+            if (action.contains("spotify")) {
+                broadcastPackage = "com.spotify.music"
+            }
+            intent.getStringExtra("track")?.let { broadcastTitle = it }
+            intent.getStringExtra("artist")?.let { broadcastArtist = it }
+            intent.getStringExtra("album")?.let { broadcastAlbum = it }
+            if (intent.hasExtra("length")) {
+                broadcastDurationMs = intent.getIntExtra("length", 0).toLong()
+            } else if (intent.hasExtra("duration")) {
+                broadcastDurationMs = intent.getLongExtra("duration", 0L)
+            }
+            if (intent.hasExtra("playbackPosition")) {
+                broadcastPositionMs = intent.getIntExtra("playbackPosition", 0).toLong()
+                broadcastPositionTimestamp = SystemClock.elapsedRealtime()
+            } else if (intent.hasExtra("position")) {
+                broadcastPositionMs = intent.getLongExtra("position", 0L)
+                broadcastPositionTimestamp = SystemClock.elapsedRealtime()
+            }
+            if (intent.hasExtra("playing")) {
+                broadcastIsPlaying = intent.getBooleanExtra("playing", false)
+            }
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        registerMediaBroadcastReceiver()
+    }
+
+    override fun onDestroy() {
+        try {
+            unregisterReceiver(mediaBroadcastReceiver)
+        } catch (_: Exception) {
+        }
+        super.onDestroy()
+    }
+
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
+    private fun registerMediaBroadcastReceiver() {
+        try {
+            val filter = IntentFilter().apply {
+                addAction("com.spotify.music.metadatachanged")
+                addAction("com.spotify.music.playbackstatechanged")
+                addAction("com.android.music.metachanged")
+                addAction("com.android.music.playstatechanged")
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(mediaBroadcastReceiver, filter, Context.RECEIVER_EXPORTED)
+            } else {
+                registerReceiver(mediaBroadcastReceiver, filter)
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // 1. Canal del Car Launcher + Multimedia / Control de Volumen Nativo (Android Auto Style)
+        // 1. Canal del Car Launcher + Reproductor del Sistema Android + Volumen/ATT
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LAUNCHER_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -63,6 +152,24 @@ class MainActivity : FlutterFragmentActivity() {
                             return@setMethodCallHandler
                         }
                         result.success(launchAppOrFallback(packageName, fallbackUrl, splitScreen))
+                    }
+                    "getSystemMediaSession" -> {
+                        result.success(readSystemMediaSessionState())
+                    }
+                    "seekMediaTo" -> {
+                        val positionMs = (call.argument<Number>("positionMs")?.toLong()) ?: 0L
+                        result.success(seekActiveMediaController(positionMs))
+                    }
+                    "openMediaListenerSettings" -> {
+                        try {
+                            val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
+                                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                            }
+                            startActivity(intent)
+                            result.success(true)
+                        } catch (_: Exception) {
+                            result.success(false)
+                        }
                     }
                     "getVolumeState" -> {
                         result.success(readAudioVolumeState())
@@ -80,9 +187,6 @@ class MainActivity : FlutterFragmentActivity() {
                     "sendMediaKey" -> {
                         val command = call.argument<String>("command") ?: "play_pause"
                         result.success(dispatchSystemMediaKey(command))
-                    }
-                    "getInstalledMediaApps" -> {
-                        result.success(discoverInstalledMediaApps())
                     }
                     "openHomeLauncherSettings" -> {
                         try {
@@ -167,6 +271,165 @@ class MainActivity : FlutterFragmentActivity() {
             }
     }
 
+    private fun isNotificationListenerEnabled(): Boolean {
+        return try {
+            val enabledListeners = Settings.Secure.getString(
+                contentResolver,
+                "enabled_notification_listeners"
+            ) ?: return false
+            enabledListeners.contains(packageName)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun getPrimaryMediaController(): MediaController? {
+        if (!isNotificationListenerEnabled()) return null
+        return try {
+            val manager = getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+                ?: return null
+            val component = ComponentName(this, RsMediaNotificationListenerService::class.java)
+            val controllers = manager.getActiveSessions(component)
+            if (controllers.isEmpty()) return null
+            controllers.firstOrNull {
+                it.playbackState?.state == PlaybackState.STATE_PLAYING
+            } ?: controllers.firstOrNull()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun resolveAppName(pkg: String?): String {
+        if (pkg.isNullOrEmpty()) return "Reproductor del Sistema"
+        return try {
+            val appInfo = packageManager.getApplicationInfo(pkg, 0)
+            packageManager.getApplicationLabel(appInfo).toString()
+        } catch (_: Exception) {
+            if (pkg.contains("spotify")) "Spotify" else "Reproductor Multimedia"
+        }
+    }
+
+    private fun readSystemMediaSessionState(): Map<String, Any?> {
+        val volumeInfo = readAudioVolumeState()
+        val hasPermission = isNotificationListenerEnabled()
+        val controller = getPrimaryMediaController()
+
+        if (controller != null) {
+            val meta = controller.metadata
+            val pb = controller.playbackState
+
+            val title = meta?.getString(MediaMetadata.METADATA_KEY_TITLE)
+                ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+                ?: broadcastTitle
+                ?: "Sin reproducción activa"
+            val artist = meta?.getString(MediaMetadata.METADATA_KEY_ARTIST)
+                ?: meta?.getString(MediaMetadata.METADATA_KEY_ALBUM_ARTIST)
+                ?: meta?.getString(MediaMetadata.METADATA_KEY_WRITER)
+                ?: broadcastArtist
+                ?: "Reproduce música en tu tablet"
+            val album = meta?.getString(MediaMetadata.METADATA_KEY_ALBUM)
+                ?: broadcastAlbum
+                ?: ""
+            val durationMs = (meta?.getLong(MediaMetadata.METADATA_KEY_DURATION) ?: 0L)
+                .coerceAtLeast(0L)
+
+            val isPlaying = pb?.state == PlaybackState.STATE_PLAYING
+            var positionMs = pb?.position ?: 0L
+            if (isPlaying && pb != null && pb.lastPositionUpdateTime > 0L) {
+                val elapsed = SystemClock.elapsedRealtime() - pb.lastPositionUpdateTime
+                val speed = if (pb.playbackSpeed > 0f) pb.playbackSpeed else 1.0f
+                positionMs += (elapsed * speed).toLong()
+            }
+            if (durationMs > 0L) {
+                positionMs = positionMs.coerceIn(0L, durationMs)
+            } else {
+                positionMs = positionMs.coerceAtLeast(0L)
+            }
+
+            // Extraer Bitmap de la carátula del álbum
+            val artKey = "${controller.packageName}|$title|$artist|$album"
+            if (artKey != cachedArtworkKey) {
+                val bmp: Bitmap? = meta?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+                    ?: meta?.getBitmap(MediaMetadata.METADATA_KEY_ART)
+                    ?: meta?.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+                cachedArtworkBytes = if (bmp != null) compressArtworkBitmap(bmp) else null
+                cachedArtworkKey = artKey
+            }
+
+            val srcPkg = controller.packageName
+            return mapOf(
+                "hasPermission" to hasPermission,
+                "hasActiveSession" to true,
+                "title" to title,
+                "artist" to artist,
+                "album" to album,
+                "durationMs" to durationMs,
+                "positionMs" to positionMs,
+                "isPlaying" to isPlaying,
+                "sourcePackage" to srcPkg,
+                "sourceAppName" to resolveAppName(srcPkg),
+                "albumArtBytes" to cachedArtworkBytes,
+                "volume" to volumeInfo
+            )
+        }
+
+        // Fallback si aún no se activó el acceso o si solo hay datos de Broadcast / AudioManager
+        val audioActive = (volumeInfo["isMusicActive"] as? Boolean) ?: broadcastIsPlaying
+        var estPos = broadcastPositionMs
+        if (broadcastIsPlaying && broadcastPositionTimestamp > 0L) {
+            estPos += (SystemClock.elapsedRealtime() - broadcastPositionTimestamp)
+        }
+        if (broadcastDurationMs > 0L) {
+            estPos = estPos.coerceIn(0L, broadcastDurationMs)
+        }
+
+        return mapOf(
+            "hasPermission" to hasPermission,
+            "hasActiveSession" to (broadcastTitle != null || audioActive),
+            "title" to (broadcastTitle ?: if (audioActive) "Audio en reproducción" else "Reproductor en espera"),
+            "artist" to (broadcastArtist ?: if (hasPermission) "Inicia una canción en tu reproductor favorito" else "Conecta el lector multimedia para ver carátula y título"),
+            "album" to (broadcastAlbum ?: ""),
+            "durationMs" to broadcastDurationMs,
+            "positionMs" to estPos,
+            "isPlaying" to audioActive,
+            "sourcePackage" to (broadcastPackage ?: "com.spotify.music"),
+            "sourceAppName" to resolveAppName(broadcastPackage),
+            "albumArtBytes" to null,
+            "volume" to volumeInfo
+        )
+    }
+
+    private fun compressArtworkBitmap(source: Bitmap): ByteArray? {
+        return try {
+            val maxDim = 360
+            val width = source.width
+            val height = source.height
+            val scaled = if (width > maxDim || height > maxDim) {
+                val ratio = width.toFloat() / height.toFloat()
+                val targetW = if (ratio >= 1f) maxDim else (maxDim * ratio).roundToInt().coerceAtLeast(1)
+                val targetH = if (ratio >= 1f) (maxDim / ratio).roundToInt().coerceAtLeast(1) else maxDim
+                Bitmap.createScaledBitmap(source, targetW, targetH, true)
+            } else {
+                source
+            }
+            val out = ByteArrayOutputStream()
+            scaled.compress(Bitmap.CompressFormat.JPEG, 86, out)
+            out.toByteArray()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun seekActiveMediaController(positionMs: Long): Boolean {
+        return try {
+            val controller = getPrimaryMediaController() ?: return false
+            controller.transportControls.seekTo(positionMs.coerceAtLeast(0L))
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun readAudioVolumeState(): Map<String, Any> {
         return try {
             val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -237,8 +500,23 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
-    private fun dispatchSystemMediaKey(command: String): Map<String, Any> {
-        return try {
+    private fun dispatchSystemMediaKey(command: String): Map<String, Any?> {
+        try {
+            val controller = getPrimaryMediaController()
+            if (controller != null) {
+                val controls = controller.transportControls
+                val isPlaying = controller.playbackState?.state == PlaybackState.STATE_PLAYING
+                when (command) {
+                    "next" -> controls.skipToNext()
+                    "previous" -> controls.skipToPrevious()
+                    "play" -> controls.play()
+                    "pause" -> controls.pause()
+                    "stop" -> controls.stop()
+                    else -> if (isPlaying) controls.pause() else controls.play()
+                }
+                return readSystemMediaSessionState()
+            }
+
             val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val keyCode = when (command) {
                 "next" -> KeyEvent.KEYCODE_MEDIA_NEXT
@@ -253,45 +531,9 @@ class MainActivity : FlutterFragmentActivity() {
             val upEvent = KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0)
             audio.dispatchMediaKeyEvent(downEvent)
             audio.dispatchMediaKeyEvent(upEvent)
-            readAudioVolumeState()
         } catch (_: Exception) {
-            readAudioVolumeState()
         }
-    }
-
-    private fun discoverInstalledMediaApps(): List<Map<String, Any>> {
-        val results = mutableListOf<Map<String, Any>>()
-        return try {
-            val pm = packageManager
-            val mainIntent = Intent(Intent.ACTION_MAIN, null).apply {
-                addCategory(Intent.CATEGORY_LAUNCHER)
-            }
-            val resolveInfos = pm.queryIntentActivities(mainIntent, 0)
-            val seenPackages = mutableSetOf<String>()
-
-            for (info in resolveInfos) {
-                val pkg = info.activityInfo?.packageName ?: continue
-                if (pkg == packageName || !seenPackages.add(pkg)) continue
-                val appInfo = info.activityInfo.applicationInfo
-                val isAudioOrVideoCategory = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    appInfo.category == ApplicationInfo.CATEGORY_AUDIO ||
-                        appInfo.category == ApplicationInfo.CATEGORY_VIDEO
-                } else {
-                    false
-                }
-                val label = info.loadLabel(pm).toString()
-                results.add(
-                    mapOf(
-                        "name" to label,
-                        "packageName" to pkg,
-                        "isMediaCategory" to isAudioOrVideoCategory
-                    )
-                )
-            }
-            results
-        } catch (_: Exception) {
-            results
-        }
+        return readSystemMediaSessionState()
     }
 
     private fun ensureBluetoothPermissions(): Boolean {
