@@ -18,6 +18,13 @@ void main() {
 
       // 4105 82 -> 130 - 40 = 90.0 °C (Temperatura operativa F4R)
       expect(Sirius34KwpParser.parseTemperatureC('410582', '4105'), equals(90.0));
+
+      // Con ruido de inicialización K-Line ("BUS INIT: OK 41 0C 0D AC") -> 875.0 RPM
+      expect(Sirius34KwpParser.parseRpm('BUS INIT: OK 41 0C 0D AC'), equals(875.0));
+
+      // Modo 03 sin averías ("43 00" o "NO DATA") -> lista vacía (sin P0313 falso)
+      expect(Sirius34KwpParser.parseMode03Dtcs('43 00 00 00 00 00 00'), isEmpty);
+      expect(Sirius34KwpParser.parseMode03Dtcs('NO DATA'), isEmpty);
     });
 
     test('Fidelidad Mecánica Shift-Light: Motor Frío (<75°C) vs Caliente (>=75°C)', () {

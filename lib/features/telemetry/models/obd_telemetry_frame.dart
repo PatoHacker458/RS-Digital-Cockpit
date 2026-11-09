@@ -75,6 +75,25 @@ class ObdTelemetryFrame {
   });
 
   factory ObdTelemetryFrame.initial({bool isSimulator = true}) {
+    if (!isSimulator) {
+      return ObdTelemetryFrame(
+        rpm: 0.0,
+        speedKmh: 0,
+        throttleTps: 0.0,
+        engineLoad: 0.0,
+        timingAdvance: 0.0,
+        intakeMapKpa: 0,
+        coolantTempC: 0.0,
+        intakeAirTempC: 0.0,
+        batteryVolts: 0.0,
+        estimatedGear: 0,
+        vvtDephaserActive: false,
+        kLineHz: 0,
+        activeProtocol: 'ISO 14230-4 KWP2000',
+        isSimulator: false,
+        timestamp: DateTime.now(),
+      );
+    }
     return ObdTelemetryFrame(
       rpm: 850.0,
       speedKmh: 0,
@@ -89,7 +108,7 @@ class ObdTelemetryFrame {
       vvtDephaserActive: false,
       kLineHz: 8,
       activeProtocol: 'ISO 14230-4 KWP2000 (Fast Init 10.4 kbps)',
-      isSimulator: isSimulator,
+      isSimulator: true,
       timestamp: DateTime.now(),
     );
   }

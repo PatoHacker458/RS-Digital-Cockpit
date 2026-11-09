@@ -39,6 +39,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
     private val ioExecutor = Executors.newSingleThreadExecutor()
+    private val ioLock = Any()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -116,7 +117,7 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                     "sendCommand" -> {
                         val command = call.argument<String>("command") ?: ""
-                        val timeoutMs = call.argument<Int>("timeoutMs") ?: 350
+                        val timeoutMs = call.argument<Int>("timeoutMs") ?: 1200
                         ioExecutor.execute {
                             try {
                                 val rawResponse = sendRawElmCommand(command, timeoutMs)
@@ -205,57 +206,92 @@ class MainActivity : FlutterFragmentActivity() {
 
     @SuppressLint("MissingPermission")
     private fun connectRfcommSocket(macAddress: String) {
-        closeRfcommSocket()
-        val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-        val adapter = btManager.adapter ?: throw IllegalStateException("Bluetooth apagado")
-        val device = adapter.getRemoteDevice(macAddress)
-        adapter.cancelDiscovery()
-        val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
-        socket.connect()
-        bluetoothSocket = socket
-        inputStream = socket.inputStream
-        outputStream = socket.outputStream
+        synchronized(ioLock) {
+            closeRfcommSocket()
+            val btManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+            val adapter = btManager.adapter ?: throw IllegalStateException("Bluetooth apagado")
+            val device = adapter.getRemoteDevice(macAddress)
+            try {
+                adapter.cancelDiscovery()
+            } catch (_: Exception) {
+            }
+
+            var socket: BluetoothSocket? = null
+            try {
+                socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
+                socket.connect()
+            } catch (primaryErr: Exception) {
+                try {
+                    socket?.close()
+                } catch (_: Exception) {
+                }
+                // Fallback a Insecure RFCOMM para adaptadores ELM327 v1.5 / v2.1 que no usan bonding seguro en SPP
+                socket = device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
+                socket.connect()
+            }
+
+            bluetoothSocket = socket
+            inputStream = socket?.inputStream
+            outputStream = socket?.outputStream
+        }
     }
 
     private fun sendRawElmCommand(cmd: String, timeoutMs: Int): String {
-        val out = outputStream ?: throw IllegalStateException("OBD2 desconectado")
-        val inp = inputStream ?: throw IllegalStateException("OBD2 desconectado")
+        synchronized(ioLock) {
+            val out = outputStream ?: throw IllegalStateException("OBD2 desconectado")
+            val inp = inputStream ?: throw IllegalStateException("OBD2 desconectado")
 
-        val payload = "${cmd.trim()}\r".toByteArray(Charsets.US_ASCII)
-        out.write(payload)
-        out.flush()
-
-        val sb = StringBuilder()
-        val startTime = System.currentTimeMillis()
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
-            if (inp.available() > 0) {
-                val ch = inp.read().toChar()
-                if (ch == '>') {
-                    break
+            // 1. Limpiar cualquier byte residual en el buffer de entrada antes de transmitir
+            try {
+                while (inp.available() > 0) {
+                    inp.read()
                 }
-                sb.append(ch)
-            } else {
-                Thread.sleep(4)
+            } catch (_: Exception) {
             }
+
+            // 2. Enviar comando terminado en Carriage Return (\r) según especificación ELM327
+            val payload = "${cmd.trim()}\r".toByteArray(Charsets.US_ASCII)
+            out.write(payload)
+            out.flush()
+
+            // 3. Leer respuesta hasta recibir el prompt '>' del ELM327 o agotar timeoutMs
+            val sb = StringBuilder()
+            val startTime = System.currentTimeMillis()
+            while (System.currentTimeMillis() - startTime < timeoutMs) {
+                val avail = inp.available()
+                if (avail > 0) {
+                    val byteVal = inp.read()
+                    if (byteVal == -1) break
+                    val ch = byteVal.toChar()
+                    if (ch == '>') {
+                        break
+                    }
+                    sb.append(ch)
+                } else {
+                    Thread.sleep(5)
+                }
+            }
+
+            return sb.toString()
+                .replace("\r", " ")
+                .replace("\n", " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
         }
-        return sb.toString()
-            .replace("\r", "")
-            .replace("\n", "")
-            .replace(" ", "")
-            .trim()
     }
 
     private fun closeRfcommSocket() {
-        try {
-            inputStream?.close()
-            outputStream?.close()
-            bluetoothSocket?.close()
-        } catch (_: Exception) {
-        } finally {
-            inputStream = null
-            outputStream = null
-            bluetoothSocket = null
+        synchronized(ioLock) {
+            try {
+                inputStream?.close()
+                outputStream?.close()
+                bluetoothSocket?.close()
+            } catch (_: Exception) {
+            } finally {
+                inputStream = null
+                outputStream = null
+                bluetoothSocket = null
+            }
         }
     }
 }
-

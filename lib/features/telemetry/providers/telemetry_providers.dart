@@ -271,29 +271,37 @@ final obdConnectionModeProvider =
   ObdConnectionModeNotifier.new,
 );
 
-final obdTelemetryStreamProvider = StreamProvider<ObdTelemetryFrame>((ref) {
-  final adapterState = ref.watch(obdConnectionModeProvider);
+final obdTelemetryStreamProvider =
+    StreamProvider<ObdTelemetryFrame>((ref) async* {
+  final mode = ref.watch(obdConnectionModeProvider.select((s) => s.mode));
+  ref.watch(obdConnectionModeProvider.select((s) => s.isConnected));
   final notifier = ref.read(obdConnectionModeProvider.notifier);
   final dataSource = notifier.activeDataSource;
 
-  if (adapterState.mode == ObdConnectionMode.trackSimulator &&
-      !dataSource.isConnected) {
-    dataSource.connect();
+  if (mode == ObdConnectionMode.trackSimulator && !dataSource.isConnected) {
+    await dataSource.connect();
   }
 
-  return dataSource.telemetryStream.map((frame) {
+  // Emitir el último cuadro conocido inmediatamente para evitar esperas en la UI
+  yield dataSource.currentFrame.copyWith(
+    isSimulator: mode == ObdConnectionMode.trackSimulator,
+  );
+
+  await for (final frame in dataSource.telemetryStream) {
     ref.read(telemetrySessionStatsProvider.notifier).recordFrame(frame);
-    return frame.copyWith(
-      isSimulator: adapterState.mode == ObdConnectionMode.trackSimulator,
+    yield frame.copyWith(
+      isSimulator: mode == ObdConnectionMode.trackSimulator,
     );
-  });
+  }
 });
 
-final obdTerminalLogsProvider = StreamProvider<List<String>>((ref) {
-  ref.watch(obdConnectionModeProvider);
+final obdTerminalLogsProvider = StreamProvider<List<String>>((ref) async* {
+  ref.watch(obdConnectionModeProvider.select((s) => s.mode));
+  ref.watch(obdConnectionModeProvider.select((s) => s.isConnected));
   final dataSource =
       ref.read(obdConnectionModeProvider.notifier).activeDataSource;
-  return dataSource.rawTerminalLogStream;
+  yield dataSource.currentLogs;
+  yield* dataSource.rawTerminalLogStream;
 });
 
 class TelemetrySessionStatsNotifier extends Notifier<TelemetrySessionStats> {
@@ -344,9 +352,12 @@ final telemetrySessionStatsProvider =
 class Sirius34DtcNotifier extends AsyncNotifier<List<Sirius34DtcFault>> {
   @override
   Future<List<Sirius34DtcFault>> build() async {
-    ref.watch(obdConnectionModeProvider);
-    final ds = ref.read(obdConnectionModeProvider.notifier).activeDataSource;
-    return ds.readSirius34DtcCodes();
+    final mode = ref.watch(obdConnectionModeProvider.select((s) => s.mode));
+    if (mode == ObdConnectionMode.trackSimulator) {
+      final ds = ref.read(obdConnectionModeProvider.notifier).activeDataSource;
+      return ds.readSirius34DtcCodes();
+    }
+    return const <Sirius34DtcFault>[];
   }
 
   Future<void> scanDtcCodes() async {
