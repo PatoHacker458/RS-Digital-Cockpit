@@ -4,11 +4,7 @@ import '../../../core/theme/app_theme.dart';
 import '../providers/auth_profile_providers.dart';
 import 'password_recovery_screen.dart';
 
-/// Pantalla de Autenticación Renault Sport (Firebase Auth):
-/// - Correo y Contraseña (`password`)
-/// - Google Sign-In (`google.com`)
-/// - GitHub OAuth (`github.com`)
-/// Cumplimiento estricto: Gestión de estado 100% reactiva en Riverpod.
+/// Pantalla de Inicio de Sesión de RS Digital Cockpit (Email, Google, GitHub).
 class AuthScreen extends ConsumerWidget {
   const AuthScreen({super.key});
 
@@ -23,61 +19,65 @@ class AuthScreen extends ConsumerWidget {
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(20),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 520),
+              constraints: const BoxConstraints(maxWidth: 460),
               child: Card(
                 child: Padding(
-                  padding: const EdgeInsets.all(28),
+                  padding: const EdgeInsets.all(24),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.shield_rounded, color: primary, size: 32),
+                          Icon(
+                            Icons.sports_motorsports_rounded,
+                            color: primary,
+                            size: 30,
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'RENAULT SPORT TELEMETRY ID',
+                                  'RS DIGITAL COCKPIT',
                                   style: AppTheme.renaultSportHeaderStyle(
                                     fontSize: 20,
                                     color: primary,
                                   ),
                                 ),
                                 const Text(
-                                  'ECU Siemens Sirius 34 // Firebase Cloud Gate',
-                                  style: TextStyle(fontSize: 12),
+                                  'Inicia sesión con tu cuenta de piloto',
+                                  style: TextStyle(fontSize: 12.5),
                                 ),
                               ],
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 24),
+                      const SizedBox(height: 22),
                       if (formState.isRegisterMode) ...[
                         TextFormField(
                           initialValue: formState.pilotName,
                           onChanged: formNotifier.updatePilotName,
                           decoration: const InputDecoration(
-                            labelText: 'Nombre del Piloto',
+                            labelText: 'Nombre o Apodo',
                             prefixIcon: Icon(Icons.person_outline_rounded),
                           ),
                         ),
-                        const SizedBox(height: 14),
+                        const SizedBox(height: 12),
                       ],
                       TextFormField(
                         initialValue: formState.email,
                         onChanged: formNotifier.updateEmail,
                         keyboardType: TextInputType.emailAddress,
                         decoration: const InputDecoration(
-                          labelText: 'Correo Electrónico',
+                          labelText: 'Correo electrónico',
                           prefixIcon: Icon(Icons.alternate_email_rounded),
                         ),
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 12),
                       TextFormField(
                         initialValue: formState.password,
                         onChanged: formNotifier.updatePassword,
@@ -95,7 +95,6 @@ class AuthScreen extends ConsumerWidget {
                           ),
                         ),
                       ),
-                      const SizedBox(height: 8),
                       Align(
                         alignment: Alignment.centerRight,
                         child: TextButton(
@@ -111,7 +110,7 @@ class AuthScreen extends ConsumerWidget {
                       ),
                       if (formState.feedbackMessage != null) ...[
                         Container(
-                          padding: const EdgeInsets.all(12),
+                          padding: const EdgeInsets.all(10),
                           margin: const EdgeInsets.only(bottom: 12),
                           decoration: BoxDecoration(
                             color: (formState.isError
@@ -131,33 +130,37 @@ class AuthScreen extends ConsumerWidget {
                           ),
                         ),
                       ],
-                      ElevatedButton.icon(
-                        onPressed: () => authNotifier.signInOrRegisterWithEmail(
-                          email: formState.email,
-                          password: formState.password,
-                          displayName: formState.pilotName,
-                          isRegister: formState.isRegisterMode,
-                        ),
-                        icon: const Icon(Icons.key_rounded),
-                        label: Text(
+                      ElevatedButton(
+                        onPressed: formState.isSubmitting
+                            ? null
+                            : () => authNotifier.signInOrRegisterWithEmail(
+                                  email: formState.email,
+                                  password: formState.password,
+                                  displayName: formState.pilotName,
+                                  isRegister: formState.isRegisterMode,
+                                ),
+                        child: Text(
                           formState.isRegisterMode
-                              ? 'REGISTRAR CUENTA EMAIL (REQUIERE VERIFICACIÓN)'
-                              : 'ENTRAR CON CORREO Y CONTRASEÑA',
+                              ? 'CREAR CUENTA'
+                              : 'INICIAR SESIÓN',
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 6),
                       TextButton(
                         onPressed: formNotifier.toggleRegisterMode,
                         child: Text(
                           formState.isRegisterMode
-                              ? '¿Ya tienes cuenta? Inicia sesión aquí'
-                              : '¿Nuevo piloto? Regístrate con Correo (prueba bloqueo emailVerified=false)',
+                              ? '¿Ya tienes cuenta? Inicia sesión'
+                              : '¿No tienes cuenta? Regístrate con correo',
                         ),
                       ),
-                      const Divider(height: 28),
+                      const Divider(height: 24),
                       const Text(
-                        'PROVEEDORES FEDERADOS OAUTH 2.0 (AVATAR BLOQUEADO POR REGLA DE NEGOCIO):',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                        'O CONTINÚA CON',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 12),
@@ -165,17 +168,21 @@ class AuthScreen extends ConsumerWidget {
                         children: [
                           Expanded(
                             child: OutlinedButton.icon(
-                              onPressed: authNotifier.signInWithGoogle,
-                              icon: const Icon(Icons.g_mobiledata_rounded, size: 26),
-                              label: const Text('GOOGLE SIGN-IN'),
+                              onPressed: formState.isSubmitting
+                                  ? null
+                                  : authNotifier.signInWithGoogle,
+                              icon: const Icon(Icons.g_mobiledata_rounded, size: 24),
+                              label: const Text('GOOGLE'),
                             ),
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 10),
                           Expanded(
                             child: OutlinedButton.icon(
-                              onPressed: authNotifier.signInWithGitHub,
-                              icon: const Icon(Icons.code_rounded, size: 20),
-                              label: const Text('GITHUB AUTH'),
+                              onPressed: formState.isSubmitting
+                                  ? null
+                                  : authNotifier.signInWithGitHub,
+                              icon: const Icon(Icons.code_rounded, size: 18),
+                              label: const Text('GITHUB'),
                             ),
                           ),
                         ],

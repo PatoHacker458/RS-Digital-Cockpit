@@ -5,16 +5,8 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../models/obd_telemetry_frame.dart';
 
-/// WIDGET DE INNOVACIÓN EN UI #1 (10% RÚBRICA):
-/// `RenaultSportTachometerWidget`
-/// Implementado con `CustomPainter` + `ShaderMask` a 120 FPS.
-/// - Escala radial de 0 a 8,000 RPM inspirada en el cuadro Sagem del Clio 172 Fase 2.
-/// - Zona roja dinámica dependiente de la temperatura del motor (`0105`):
-///   * Motor Frío (< 75°C): Zona amarilla de protección mecánica desde 5,000 RPM.
-///   * Motor Caliente (>= 75°C): Testigo Verde OEM a 6,750 RPM y corte a 7,250 RPM.
-/// - Barra superior LED progresiva (Verde -> Ámbar -> Parpadeo Rojo/Azul estilo F1).
-/// - Ícono clásico de la Palanca de Cambios OEM Renault Sport dibujado vectorialmente.
-/// - Arquitectura reactiva pura mediante Riverpod.
+/// Tacómetro Radial Sagem 0-8000 RPM (`CustomPainter` + `ShaderMask`)
+/// 100% responsivo (sin desbordamientos en tablet ni teléfono).
 class RenaultSportTachometerWidget extends ConsumerWidget {
   final ObdTelemetryFrame frame;
 
@@ -29,31 +21,37 @@ class RenaultSportTachometerWidget extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final flashPhase = (frame.timestamp.millisecondsSinceEpoch ~/ 90).isEven;
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // 1. Barra Superior Progresiva de LEDs Shift-Light (Estilo F1 / Clio Cup)
-        _ProgressiveShiftLightBar(
-          rpm: frame.rpm,
-          isEngineCold: frame.isEngineCold,
-          stage: frame.shiftLightStage,
-          flashPhase: flashPhase,
-        ),
-        const SizedBox(height: 10),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final availableHeight = constraints.maxHeight;
+        final showLedBar = availableHeight > 180;
+        final dialAreaHeight =
+            showLedBar ? math.max(120.0, availableHeight - 38.0) : availableHeight;
+        final size = math.min(constraints.maxWidth, dialAreaHeight);
 
-        // 2. Dial Radial Sagem con ShaderMask Metálico + CustomPainter a 120 FPS
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final size = math.min(constraints.maxWidth, constraints.maxHeight);
-              return Center(
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (showLedBar) ...[
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 380),
+                child: _ProgressiveShiftLightBar(
+                  rpm: frame.rpm,
+                  isEngineCold: frame.isEngineCold,
+                  stage: frame.shiftLightStage,
+                  flashPhase: flashPhase,
+                ),
+              ),
+              const SizedBox(height: 6),
+            ],
+            Expanded(
+              child: Center(
                 child: SizedBox(
                   width: size,
                   height: size,
                   child: Stack(
                     alignment: Alignment.center,
                     children: [
-                      // ShaderMask que aplica reflejo de cristal/aluminio cepillado sobre el bisel
                       ShaderMask(
                         shaderCallback: (Rect bounds) {
                           return LinearGradient(
@@ -79,8 +77,6 @@ class RenaultSportTachometerWidget extends ConsumerWidget {
                           painter: _SagemBezelShaderRingPainter(isDark: isDark),
                         ),
                       ),
-
-                      // CustomPainter Principal del Tacómetro Sagem 0-8000 RPM
                       CustomPaint(
                         size: Size(size, size),
                         painter: _RenaultSportTachometerPainter(
@@ -94,25 +90,27 @@ class RenaultSportTachometerWidget extends ConsumerWidget {
                           flashPhase: flashPhase,
                         ),
                       ),
-
-                      // Lectura Digital Central (Marcha JC5, Velocidad y RPM Tabulares)
                       Positioned(
-                        bottom: size * 0.14,
-                        child: _CenterDigitalClusterReadout(
-                          frame: frame,
-                          skin: skin,
-                          isDark: isDark,
-                          flashPhase: flashPhase,
+                        bottom: size * 0.11,
+                        width: size * 0.68,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: _CenterDigitalClusterReadout(
+                            frame: frame,
+                            skin: skin,
+                            isDark: isDark,
+                            flashPhase: flashPhase,
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-              );
-            },
-          ),
-        ),
-      ],
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -139,38 +137,26 @@ class _ProgressiveShiftLightBar extends StatelessWidget {
     final activeLeds = (progress * totalLeds).round();
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      height: 24,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: const Color(0xFF0A0C0F),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: stage == ShiftLightStage.fuelCutLimiterFlash && flashPhase
               ? RenaultSportPalette.revLimiterRed
               : const Color(0xFF282E38),
-          width: 1.5,
+          width: 1.2,
         ),
-        boxShadow: stage != ShiftLightStage.off
-            ? <BoxShadow>[
-                BoxShadow(
-                  color: (stage == ShiftLightStage.optimalGreenShift
-                          ? RenaultSportPalette.oemShiftGreen
-                          : RenaultSportPalette.revLimiterRed)
-                      .withValues(alpha: 0.35),
-                  blurRadius: 16,
-                  spreadRadius: 1,
-                ),
-              ]
-            : null,
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: List<Widget>.generate(totalLeds, (index) {
           final isLit = index < activeLeds;
           Color ledColor;
           if (stage == ShiftLightStage.fuelCutLimiterFlash) {
             ledColor = flashPhase
                 ? RenaultSportPalette.revLimiterRed
-                : const Color(0xFF00AAFF); // Parpadeo Rojo/Azul F1 al corte 7,250 RPM
+                : const Color(0xFF00AAFF);
           } else if (index < 6) {
             ledColor = RenaultSportPalette.oemShiftGreen;
           } else if (index < 11) {
@@ -179,21 +165,21 @@ class _ProgressiveShiftLightBar extends StatelessWidget {
             ledColor = RenaultSportPalette.revLimiterRed;
           }
 
-          return Container(
-            width: 14,
-            height: 10,
-            margin: const EdgeInsets.symmetric(horizontal: 2.5),
-            decoration: BoxDecoration(
-              color: isLit ? ledColor : const Color(0xFF1E222A),
-              borderRadius: BorderRadius.circular(3),
-              boxShadow: isLit
-                  ? <BoxShadow>[
-                      BoxShadow(
-                        color: ledColor.withValues(alpha: 0.8),
-                        blurRadius: 8,
-                      ),
-                    ]
-                  : null,
+          return Expanded(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 1.8),
+              decoration: BoxDecoration(
+                color: isLit ? ledColor : const Color(0xFF1E222A),
+                borderRadius: BorderRadius.circular(2.5),
+                boxShadow: isLit
+                    ? <BoxShadow>[
+                        BoxShadow(
+                          color: ledColor.withValues(alpha: 0.75),
+                          blurRadius: 6,
+                        ),
+                      ]
+                    : null,
+              ),
             ),
           );
         }),
@@ -209,10 +195,10 @@ class _SagemBezelShaderRingPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = (math.min(size.width, size.height) / 2) - 4;
+    final radius = (math.min(size.width, size.height) / 2) - 3;
     final ringPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 6.0
+      ..strokeWidth = 5.0
       ..color = Colors.white;
     canvas.drawCircle(center, radius, ringPaint);
   }
@@ -243,7 +229,6 @@ class _RenaultSportTachometerPainter extends CustomPainter {
     required this.flashPhase,
   });
 
-  // Ángulo inicial (135°) y barrido total (270°) para escala 0 a 8,000 RPM
   static const double _startAngle = 135.0 * (math.pi / 180.0);
   static const double _sweepAngle = 270.0 * (math.pi / 180.0);
   static const double _maxScaleRpm = 8000.0;
@@ -256,9 +241,8 @@ class _RenaultSportTachometerPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = (math.min(size.width, size.height) / 2) - 12;
+    final radius = (math.min(size.width, size.height) / 2) - 8;
 
-    // 1. Fondo de esfera Sagem 2004 Phase 2
     final dialBgPaint = Paint()
       ..shader = RadialGradient(
         colors: isDark
@@ -275,73 +259,84 @@ class _RenaultSportTachometerPainter extends CustomPainter {
 
     final arcRect = Rect.fromCircle(center: center, radius: radius * 0.86);
 
-    // 2. Arco base de escala (0 a 8,000 RPM)
     final baseTrackPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 14.0
+      ..strokeWidth = 12.0
       ..strokeCap = StrokeCap.butt
       ..color = isDark ? const Color(0xFF252A34) : const Color(0xFFCBD5E1);
     canvas.drawArc(arcRect, _startAngle, _sweepAngle, false, baseTrackPaint);
 
-    // 3. ZONA ROJA DINÁMICA SEGÚN TEMPERATURA DEL MOTOR (0105)
     if (isEngineCold) {
-      // Motor en frío (< 75°C): Zona Amarilla de protección desde 5,000 a 6,000 RPM
-      // y Zona Roja estricta de 6,000 a 8,000 RPM
       final coldWarnStart = _rpmToAngle(5000.0);
       final coldWarnSweep = _rpmToAngle(6000.0) - coldWarnStart;
-      final coldAmberPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 14.0
-        ..color = RenaultSportPalette.coldEngineAmber;
-      canvas.drawArc(arcRect, coldWarnStart, coldWarnSweep, false, coldAmberPaint);
+      canvas.drawArc(
+        arcRect,
+        coldWarnStart,
+        coldWarnSweep,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 12.0
+          ..color = RenaultSportPalette.coldEngineAmber,
+      );
 
       final coldRedStart = _rpmToAngle(6000.0);
       final coldRedSweep = _rpmToAngle(8000.0) - coldRedStart;
-      final coldRedPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 14.0
-        ..color = RenaultSportPalette.revLimiterRed;
-      canvas.drawArc(arcRect, coldRedStart, coldRedSweep, false, coldRedPaint);
+      canvas.drawArc(
+        arcRect,
+        coldRedStart,
+        coldRedSweep,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 12.0
+          ..color = RenaultSportPalette.revLimiterRed,
+      );
     } else {
-      // Motor en temperatura operativa (>= 75°C):
-      // Banda de par VVT (5,150 a 6,750 RPM), Zona Verde Óptima (6,750 a 7,250 RPM)
-      // y Zona de Corte de Inyección Sirius 34 (7,250 a 8,000 RPM).
       final vvtStart = _rpmToAngle(5150.0);
       final vvtSweep = _rpmToAngle(6750.0) - vvtStart;
-      final vvtPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 6.0
-        ..color = skin.primaryDialColor.withValues(alpha: 0.45);
       canvas.drawArc(
         Rect.fromCircle(center: center, radius: radius * 0.78),
         vvtStart,
         vvtSweep,
         false,
-        vvtPaint,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 5.0
+          ..color = skin.primaryDialColor.withValues(alpha: 0.45),
       );
 
       final greenShiftStart = _rpmToAngle(6750.0);
       final greenShiftSweep = _rpmToAngle(7250.0) - greenShiftStart;
-      final greenShiftPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 14.0
-        ..color = RenaultSportPalette.oemShiftGreen;
-      canvas.drawArc(arcRect, greenShiftStart, greenShiftSweep, false, greenShiftPaint);
+      canvas.drawArc(
+        arcRect,
+        greenShiftStart,
+        greenShiftSweep,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 12.0
+          ..color = RenaultSportPalette.oemShiftGreen,
+      );
 
       final warmRedStart = _rpmToAngle(7250.0);
       final warmRedSweep = _rpmToAngle(8000.0) - warmRedStart;
-      final warmRedPaint = Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 14.0
-        ..color = RenaultSportPalette.revLimiterRed;
-      canvas.drawArc(arcRect, warmRedStart, warmRedSweep, false, warmRedPaint);
+      canvas.drawArc(
+        arcRect,
+        warmRedStart,
+        warmRedSweep,
+        false,
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 12.0
+          ..color = RenaultSportPalette.revLimiterRed,
+      );
     }
 
-    // 4. Estela luminosa del régimen actual de RPM
     final activeSweep = _rpmToAngle(rpm) - _startAngle;
     final activeArcPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 8.0
+      ..strokeWidth = 7.0
       ..strokeCap = StrokeCap.round
       ..color = shiftStage == ShiftLightStage.fuelCutLimiterFlash
           ? RenaultSportPalette.revLimiterRed
@@ -356,7 +351,6 @@ class _RenaultSportTachometerPainter extends CustomPainter {
       activeArcPaint,
     );
 
-    // 5. Marcas de graduación (0 a 8 x 1000 RPM) y números tabulares Sagem
     for (var i = 0; i <= 32; i++) {
       final tickRpm = i * 250.0;
       final angle = _rpmToAngle(tickRpm);
@@ -364,7 +358,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
       final isHalf = i % 2 == 0 && !isMajor;
 
       final outerR = radius * 0.84;
-      final innerR = outerR - (isMajor ? 16.0 : (isHalf ? 10.0 : 6.0));
+      final innerR = outerR - (isMajor ? 14.0 : (isHalf ? 9.0 : 5.0));
 
       final p1 = Offset(
         center.dx + outerR * math.cos(angle),
@@ -378,13 +372,15 @@ class _RenaultSportTachometerPainter extends CustomPainter {
       final isRedZoneTick =
           (isEngineCold && tickRpm >= 5000) || (!isEngineCold && tickRpm >= 7000);
 
-      final tickPaint = Paint()
-        ..strokeWidth = isMajor ? 3.2 : 1.5
-        ..color = isRedZoneTick
-            ? RenaultSportPalette.revLimiterRed
-            : (isDark ? const Color(0xFFF3F4F6) : const Color(0xFF0F172A));
-
-      canvas.drawLine(p1, p2, tickPaint);
+      canvas.drawLine(
+        p1,
+        p2,
+        Paint()
+          ..strokeWidth = isMajor ? 2.8 : 1.4
+          ..color = isRedZoneTick
+              ? RenaultSportPalette.revLimiterRed
+              : (isDark ? const Color(0xFFF3F4F6) : const Color(0xFF0F172A)),
+      );
 
       if (isMajor) {
         final numberVal = (tickRpm ~/ 1000).toString();
@@ -415,8 +411,6 @@ class _RenaultSportTachometerPainter extends CustomPainter {
       }
     }
 
-    // 6. ÍCONO OEM DE PALANCA DE CAMBIOS (TESTIGO DE CAMBIO SAGEM CLIO 172 FASE 2)
-    // Ubicado en el cuadrante derecho como en el tablero original de 2004
     _drawOemGearshiftLightIcon(
       canvas: canvas,
       center: Offset(center.dx + radius * 0.36, center.dy + radius * 0.16),
@@ -424,7 +418,6 @@ class _RenaultSportTachometerPainter extends CustomPainter {
       flashPhase: flashPhase,
     );
 
-    // 7. Aguja física Sagem con contrapeso y sombra
     final needleAngle = _rpmToAngle(rpm);
     final needleLength = radius * 0.78;
     final tailLength = radius * 0.16;
@@ -438,35 +431,31 @@ class _RenaultSportTachometerPainter extends CustomPainter {
       center.dy - tailLength * math.sin(needleAngle),
     );
 
-    final shadowPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.55)
-      ..strokeWidth = 6.0
-      ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-    canvas.drawLine(tail.translate(2, 4), tip.translate(2, 4), shadowPaint);
-
-    final needlePaint = Paint()
-      ..color = shiftStage == ShiftLightStage.optimalGreenShift
-          ? RenaultSportPalette.oemShiftGreen
-          : skin.needleColor
-      ..strokeWidth = 4.5
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(tail, tip, needlePaint);
-
-    // Capuchón central de aluminio cepillado
-    canvas.drawCircle(
-      center,
-      radius * 0.09,
-      Paint()..color = const Color(0xFF262B35),
+    canvas.drawLine(
+      tail.translate(2, 4),
+      tip.translate(2, 4),
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.55)
+        ..strokeWidth = 5.0
+        ..strokeCap = StrokeCap.round
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
     );
-    canvas.drawCircle(
-      center,
-      radius * 0.045,
-      Paint()..color = skin.primaryDialColor,
+
+    canvas.drawLine(
+      tail,
+      tip,
+      Paint()
+        ..color = shiftStage == ShiftLightStage.optimalGreenShift
+            ? RenaultSportPalette.oemShiftGreen
+            : skin.needleColor
+        ..strokeWidth = 4.2
+        ..strokeCap = StrokeCap.round,
     );
+
+    canvas.drawCircle(center, radius * 0.085, Paint()..color = const Color(0xFF262B35));
+    canvas.drawCircle(center, radius * 0.04, Paint()..color = skin.primaryDialColor);
   }
 
-  /// Dibuja el icónico testigo de cambio del Clio RS 172 (Palanca de Cambios con flecha superior)
   void _drawOemGearshiftLightIcon({
     required Canvas canvas,
     required Offset center,
@@ -479,7 +468,6 @@ class _RenaultSportTachometerPainter extends CustomPainter {
     switch (stage) {
       case ShiftLightStage.off:
         iconColor = const Color(0xFF2B313D);
-        glowing = false;
       case ShiftLightStage.coldProtectionWarning:
         iconColor = RenaultSportPalette.coldEngineAmber;
         glowing = true;
@@ -496,7 +484,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
     if (glowing) {
       canvas.drawCircle(
         center,
-        20,
+        18,
         Paint()
           ..color = iconColor.withValues(alpha: 0.28)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
@@ -506,27 +494,25 @@ class _RenaultSportTachometerPainter extends CustomPainter {
     final paint = Paint()
       ..color = iconColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.4
+      ..strokeWidth = 2.2
       ..strokeCap = StrokeCap.round;
 
-    // Base de la rejilla en H y pomo de la palanca de cambios
-    canvas.drawCircle(Offset(center.dx, center.dy - 8), 4.5, Paint()..color = iconColor);
-    canvas.drawLine(Offset(center.dx, center.dy - 4), Offset(center.dx - 3, center.dy + 9), paint);
+    canvas.drawCircle(Offset(center.dx, center.dy - 7), 4.0, Paint()..color = iconColor);
+    canvas.drawLine(Offset(center.dx, center.dy - 3), Offset(center.dx - 3, center.dy + 8), paint);
     canvas.drawArc(
-      Rect.fromCenter(center: Offset(center.dx, center.dy + 10), width: 18, height: 8),
+      Rect.fromCenter(center: Offset(center.dx, center.dy + 9), width: 16, height: 7),
       0,
       math.pi,
       false,
       paint,
     );
 
-    // Flecha ascendente de cambio de marcha
     final arrowPath = Path()
-      ..moveTo(center.dx + 9, center.dy + 4)
-      ..lineTo(center.dx + 9, center.dy - 9)
+      ..moveTo(center.dx + 8, center.dy + 3)
+      ..lineTo(center.dx + 8, center.dy - 8)
       ..moveTo(center.dx + 5, center.dy - 5)
-      ..lineTo(center.dx + 9, center.dy - 9)
-      ..lineTo(center.dx + 13, center.dy - 5);
+      ..lineTo(center.dx + 8, center.dy - 8)
+      ..lineTo(center.dx + 11, center.dy - 5);
     canvas.drawPath(arrowPath, paint);
   }
 
@@ -561,16 +547,15 @@ class _CenterDigitalClusterReadout extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Badge de estado VVT F4R 736 o Protección en Frío
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           decoration: BoxDecoration(
             color: frame.isEngineCold
                 ? RenaultSportPalette.coldEngineAmber.withValues(alpha: 0.18)
                 : frame.vvtDephaserActive
                     ? RenaultSportPalette.oemShiftGreen.withValues(alpha: 0.20)
                     : Colors.black26,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(6),
             border: Border.all(
               color: frame.isEngineCold
                   ? RenaultSportPalette.coldEngineAmber
@@ -581,10 +566,10 @@ class _CenterDigitalClusterReadout extends StatelessWidget {
           ),
           child: Text(
             frame.isEngineCold
-                ? 'COLD MAP <75°C (MAX 5000 RPM)'
+                ? 'COLD <75°C (5K MAX)'
                 : frame.vvtDephaserActive
-                    ? 'F4R VVT DEPHASER ACTIVE'
-                    : 'SIEMENS SIRIUS 34 WARM MAP',
+                    ? 'VVT ON'
+                    : 'WARM MAP',
             style: AppTheme.telemetryNumericStyle(
               fontSize: 10,
               color: frame.isEngineCold
@@ -602,7 +587,7 @@ class _CenterDigitalClusterReadout extends StatelessWidget {
           textBaseline: TextBaseline.alphabetic,
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
               decoration: BoxDecoration(
                 color: skin.primaryDialColor.withValues(alpha: 0.18),
                 borderRadius: BorderRadius.circular(8),
@@ -611,16 +596,16 @@ class _CenterDigitalClusterReadout extends StatelessWidget {
               child: Text(
                 gearText,
                 style: AppTheme.digitalDisplayStyle(
-                  fontSize: 28,
+                  fontSize: 26,
                   color: skin.primaryDialColor,
                 ),
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Text(
               '${frame.speedKmh}',
               style: AppTheme.digitalDisplayStyle(
-                fontSize: 38,
+                fontSize: 34,
                 color: isDark ? Colors.white : const Color(0xFF0F172A),
               ),
             ),
@@ -628,7 +613,7 @@ class _CenterDigitalClusterReadout extends StatelessWidget {
             Text(
               'KM/H',
               style: AppTheme.telemetryNumericStyle(
-                fontSize: 12,
+                fontSize: 11,
                 color: isDark ? Colors.white54 : Colors.black54,
               ),
             ),
@@ -637,7 +622,7 @@ class _CenterDigitalClusterReadout extends StatelessWidget {
         Text(
           '${frame.rpm.round()} RPM',
           style: AppTheme.telemetryNumericStyle(
-            fontSize: 18,
+            fontSize: 16,
             color: frame.shiftLightStage == ShiftLightStage.optimalGreenShift
                 ? RenaultSportPalette.oemShiftGreen
                 : frame.shiftLightStage == ShiftLightStage.fuelCutLimiterFlash && flashPhase

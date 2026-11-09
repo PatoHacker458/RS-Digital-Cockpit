@@ -4,11 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../sensors/g_force_sensor_service.dart';
 
-/// WIDGET DE INNOVACIÓN EN UI #2 (10% RÚBRICA):
-/// `GForceBallWidget`
-/// Medidor vectorial de fuerzas G en tiempo real estilo Clio RS Monitor / Nissan GT-R
-/// alimentado directamente por el Acelerómetro y Giroscopio nativos (`sensors_plus`)
-/// con filtro de paso bajo exponencial.
+/// Medidor vectorial de Fuerzas G (`CustomPainter`), 100% libre de overflows.
 class GForceBallWidget extends ConsumerWidget {
   const GForceBallWidget({super.key});
 
@@ -20,25 +16,27 @@ class GForceBallWidget extends ConsumerWidget {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(12),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'RS MONITOR G-FORCE',
-                  style: AppTheme.renaultSportHeaderStyle(
-                    fontSize: 14,
-                    color: primaryAccent,
+                Flexible(
+                  child: Text(
+                    'G-FORCE MONITOR',
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.renaultSportHeaderStyle(
+                      fontSize: 13,
+                      color: primaryAccent,
+                    ),
                   ),
                 ),
                 InkWell(
                   onTap: () => ref.read(gForceSensorProvider.notifier).resetPeakG(),
                   borderRadius: BorderRadius.circular(6),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                     decoration: BoxDecoration(
                       color: primaryAccent.withValues(alpha: 0.14),
                       borderRadius: BorderRadius.circular(6),
@@ -46,7 +44,7 @@ class GForceBallWidget extends ConsumerWidget {
                     child: Text(
                       'PEAK ${gState.peakG.toStringAsFixed(2)}G ↺',
                       style: AppTheme.telemetryNumericStyle(
-                        fontSize: 11,
+                        fontSize: 10.5,
                         color: primaryAccent,
                       ),
                     ),
@@ -54,7 +52,7 @@ class GForceBallWidget extends ConsumerWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Expanded(
               child: Center(
                 child: AspectRatio(
@@ -69,27 +67,33 @@ class GForceBallWidget extends ConsumerWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _GReadoutChip(
-                  label: 'LAT (CURVA)',
-                  value: '${gState.lateralG >= 0 ? '+' : ''}${gState.lateralG.toStringAsFixed(2)}G',
-                  color: primaryAccent,
-                ),
-                _GReadoutChip(
-                  label: 'LON (FRENO/ACEL)',
-                  value:
-                      '${gState.longitudinalG >= 0 ? '+' : ''}${gState.longitudinalG.toStringAsFixed(2)}G',
-                  color: RenaultSportPalette.siriusLiquidYellow,
-                ),
-                _GReadoutChip(
-                  label: 'YAW GYRO',
-                  value: '${gState.yawRateDegSec.toStringAsFixed(0)}°/s',
-                  color: RenaultSportPalette.oemShiftGreen,
-                ),
-              ],
+            const SizedBox(height: 6),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _GReadoutChip(
+                    label: 'LAT',
+                    value:
+                        '${gState.lateralG >= 0 ? '+' : ''}${gState.lateralG.toStringAsFixed(2)}G',
+                    color: primaryAccent,
+                  ),
+                  const SizedBox(width: 16),
+                  _GReadoutChip(
+                    label: 'LON',
+                    value:
+                        '${gState.longitudinalG >= 0 ? '+' : ''}${gState.longitudinalG.toStringAsFixed(2)}G',
+                    color: RenaultSportPalette.siriusLiquidYellow,
+                  ),
+                  const SizedBox(width: 16),
+                  _GReadoutChip(
+                    label: 'YAW',
+                    value: '${gState.yawRateDegSec.toStringAsFixed(0)}°/s',
+                    color: RenaultSportPalette.oemShiftGreen,
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -112,6 +116,7 @@ class _GReadoutChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           label,
@@ -120,7 +125,7 @@ class _GReadoutChip extends StatelessWidget {
         Text(
           value,
           style: AppTheme.telemetryNumericStyle(
-            fontSize: 13,
+            fontSize: 12.5,
             color: color,
           ),
         ),
@@ -145,9 +150,8 @@ class _GForceVectorPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final maxRadius = (math.min(size.width, size.height) / 2) - 6;
+    final maxRadius = math.max(10.0, (math.min(size.width, size.height) / 2) - 4);
 
-    // Fondo radar vectorial
     canvas.drawCircle(
       center,
       maxRadius,
@@ -160,13 +164,11 @@ class _GForceVectorPainter extends CustomPainter {
       ..strokeWidth = 1.0
       ..color = isDark ? const Color(0xFF2B3240) : const Color(0xFFCBD5E1);
 
-    // Anillos concéntricos de adherencia (0.5G, 1.0G, 1.5G)
     for (final gRing in <double>[0.5, 1.0, 1.5]) {
       final r = maxRadius * (gRing / _maxScaleG);
       canvas.drawCircle(center, r, gridPaint);
     }
 
-    // Ejes ortogonales X / Y
     canvas.drawLine(
       Offset(center.dx - maxRadius, center.dy),
       Offset(center.dx + maxRadius, center.dy),
@@ -178,7 +180,6 @@ class _GForceVectorPainter extends CustomPainter {
       gridPaint,
     );
 
-    // Estela histórica de fuerzas G
     for (var i = 0; i < gState.trailPoints.length; i++) {
       final pt = gState.trailPoints[i];
       final alpha = (1.0 - (i / gState.trailPoints.length)) * 0.45;
@@ -188,44 +189,33 @@ class _GForceVectorPainter extends CustomPainter {
       );
       canvas.drawCircle(
         offset,
-        3.2,
+        3.0,
         Paint()..color = accentColor.withValues(alpha: alpha),
       );
     }
 
-    // Posición instantánea de la bola inercial G-Force
     final ballOffset = Offset(
       center.dx + (gState.lateralG / _maxScaleG).clamp(-1.0, 1.0) * maxRadius,
       center.dy - (gState.longitudinalG / _maxScaleG).clamp(-1.0, 1.0) * maxRadius,
     );
 
-    // Vector director desde el centro de gravedad del Clio 172
     canvas.drawLine(
       center,
       ballOffset,
       Paint()
         ..color = accentColor.withValues(alpha: 0.7)
-        ..strokeWidth = 2.2,
+        ..strokeWidth = 2.0,
     );
 
-    // Halo y esfera G-Force
     canvas.drawCircle(
       ballOffset,
-      12.0,
+      10.0,
       Paint()
         ..color = accentColor.withValues(alpha: 0.32)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
     );
-    canvas.drawCircle(
-      ballOffset,
-      6.5,
-      Paint()..color = accentColor,
-    );
-    canvas.drawCircle(
-      ballOffset,
-      2.5,
-      Paint()..color = Colors.white,
-    );
+    canvas.drawCircle(ballOffset, 5.5, Paint()..color = accentColor);
+    canvas.drawCircle(ballOffset, 2.2, Paint()..color = Colors.white);
   }
 
   @override
@@ -235,4 +225,3 @@ class _GForceVectorPainter extends CustomPainter {
         oldDelegate.accentColor != accentColor;
   }
 }
-

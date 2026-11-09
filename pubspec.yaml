@@ -1,8 +1,7 @@
 name: clio_rs_172_cockpit_telemetry_hub
 description: >-
-  Android 17 Car Launcher (Home Screen) & Real-Time KWP2000 Telemetry Suite
-  for the 2004 Renault Clio II Sport 172 Phase 2 (F4R 736 / Siemens Sirius 34 ECU)
-  targeting Google Pixel Tablet (2560x1600, 16:10).
+  RS Digital Cockpit - Android Car Launcher & Real-Time KWP2000 Telemetry Suite
+  for the 2004 Renault Clio II Sport 172 Phase 2 (F4R 736 / Siemens Sirius 34 ECU).
 publish_to: 'none'
 version: 2.0.4+172
 
