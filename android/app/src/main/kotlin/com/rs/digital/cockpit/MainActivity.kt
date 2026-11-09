@@ -254,21 +254,27 @@ class MainActivity : FlutterFragmentActivity() {
             out.write(payload)
             out.flush()
 
-            // 3. Leer respuesta hasta recibir el prompt '>' del ELM327 o agotar timeoutMs
+            // 3. Leer respuesta en bloques rápidos hasta recibir el prompt '>' del ELM327 o agotar timeoutMs
             val sb = StringBuilder()
+            val buffer = ByteArray(128)
             val startTime = System.currentTimeMillis()
-            while (System.currentTimeMillis() - startTime < timeoutMs) {
+            var promptReceived = false
+            while (System.currentTimeMillis() - startTime < timeoutMs && !promptReceived) {
                 val avail = inp.available()
                 if (avail > 0) {
-                    val byteVal = inp.read()
-                    if (byteVal == -1) break
-                    val ch = byteVal.toChar()
-                    if (ch == '>') {
-                        break
+                    val toRead = if (avail > buffer.size) buffer.size else avail
+                    val bytesRead = inp.read(buffer, 0, toRead)
+                    if (bytesRead <= 0) break
+                    for (i in 0 until bytesRead) {
+                        val ch = buffer[i].toInt().toChar()
+                        if (ch == '>') {
+                            promptReceived = true
+                            break
+                        }
+                        sb.append(ch)
                     }
-                    sb.append(ch)
                 } else {
-                    Thread.sleep(5)
+                    Thread.sleep(1)
                 }
             }
 
