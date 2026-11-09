@@ -9,6 +9,7 @@ import '../auth_profile/screens/pilot_profile_screen.dart';
 import '../cloud_sync_fcm/blackbox_realtime_service.dart';
 import '../digital_garage_payments/screens/digital_garage_screen.dart';
 import '../map_track/track_map_screen.dart';
+import '../multimedia/multimedia_hub_screen.dart';
 import '../sensors/biometric_immobilizer_service.dart';
 import '../telemetry/models/obd_telemetry_frame.dart';
 import '../telemetry/providers/telemetry_providers.dart';
@@ -53,6 +54,8 @@ class CockpitDashboardScreen extends ConsumerWidget {
                       CockpitSectionTab.cockpitHud => isTabletLandscape
                           ? _TabletThreeColumnCockpitView(frame: frame)
                           : _CompactScrollableCockpitView(frame: frame),
+                      CockpitSectionTab.multimediaHub =>
+                        const MultimediaHubScreen(),
                       CockpitSectionTab.trackMapGps => const TrackMapScreen(
                           isCompactPreview: false,
                         ),
