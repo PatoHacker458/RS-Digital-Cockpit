@@ -639,6 +639,7 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                     const SizedBox(height: 16),
 
                     // Controles Centrados: Random, Anterior, Play/Pausa, Siguiente, Repeat
+                    // Tamaños ampliados proporcionalmente para máxima comodidad al conducir
                     FittedBox(
                       fit: BoxFit.scaleDown,
                       child: Row(
@@ -648,27 +649,27 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                           _CenteredMediaButton(
                             icon: Icons.shuffle_rounded,
                             tooltip: 'Aleatorio (Random)',
-                            size: 46,
-                            iconSize: 22,
+                            size: 56,
+                            iconSize: 27,
                             active: state.shuffleEnabled,
                             accentColor: primary,
                             inkColor: inkColor,
                             onTap: notifier.toggleShuffle,
                           ),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: 18),
 
                           // ANTERIOR
                           _CenteredMediaButton(
                             icon: Icons.skip_previous_rounded,
                             tooltip: 'Anterior',
-                            size: 56,
-                            iconSize: 30,
+                            size: 68,
+                            iconSize: 36,
                             accentColor: primary,
                             inkColor: inkColor,
                             onTap: () =>
                                 notifier.sendMediaTransportCommand('previous'),
                           ),
-                          const SizedBox(width: 20),
+                          const SizedBox(width: 22),
 
                           // PLAY / PAUSA
                           _CenteredMediaButton(
@@ -676,28 +677,28 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                                 ? Icons.pause_rounded
                                 : Icons.play_arrow_rounded,
                             tooltip: state.isPlaying ? 'Pausar' : 'Reproducir',
-                            size: 74,
-                            iconSize: 42,
+                            size: 88,
+                            iconSize: 48,
                             isPrimaryFocal: true,
                             accentColor: primary,
                             inkColor: inkColor,
                             onTap: () => notifier
                                 .sendMediaTransportCommand('play_pause'),
                           ),
-                          const SizedBox(width: 20),
+                          const SizedBox(width: 22),
 
                           // SIGUIENTE
                           _CenteredMediaButton(
                             icon: Icons.skip_next_rounded,
                             tooltip: 'Siguiente',
-                            size: 56,
-                            iconSize: 30,
+                            size: 68,
+                            iconSize: 36,
                             accentColor: primary,
                             inkColor: inkColor,
                             onTap: () =>
                                 notifier.sendMediaTransportCommand('next'),
                           ),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: 18),
 
                           // REPEAT (Off -> Todo -> 1 Canción)
                           _CenteredMediaButton(
@@ -709,8 +710,8 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                               MediaRepeatMode.all => 'Repetir: Lista',
                               MediaRepeatMode.one => 'Repetir: 1 Canción',
                             },
-                            size: 46,
-                            iconSize: 22,
+                            size: 56,
+                            iconSize: 27,
                             active: state.repeatMode != MediaRepeatMode.off,
                             accentColor: primary,
                             inkColor: inkColor,

@@ -11,20 +11,16 @@ import '../cloud_sync_fcm/fcm_notification_service.dart';
 
 /// Filtros simples del mapa en TRACK
 enum TrackMapFilter {
-  workshops('Talleres', 'car_repair', 'shop', 'car_repair'),
-  gasStations('Gasolineras', 'gas_station', 'amenity', 'fuel'),
-  parking('Estacionamientos', 'parking', 'amenity', 'parking');
+  workshops('Talleres', 'taller mecanico'),
+  gasStations('Gasolineras', 'gasolinera'),
+  parking('Estacionamientos', 'estacionamiento');
 
   final String label;
-  final String googlePlaceType;
-  final String osmKey;
-  final String osmValue;
+  final String searchQuery;
 
   const TrackMapFilter(
     this.label,
-    this.googlePlaceType,
-    this.osmKey,
-    this.osmValue,
+    this.searchQuery,
   );
 }
 
@@ -177,7 +173,6 @@ class TrackMapTelemetryState {
 class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
   static const MethodChannel _launcherChannel =
       MethodChannel('com.renaultsport.clio172/launcher');
-  static const String _mapsApiKey = 'AIzaSyCKar31BqppLi08THzmfjCIVM8C6yyEaSo';
 
   // Umbrales geofence del punto de partida/meta
   static const double _leaveZoneRadiusMeters = 35.0;
@@ -429,7 +424,7 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
   }
 
   /// Activa o desactiva un filtro simple del mapa (Talleres, Gasolineras, Estacionamientos)
-  /// buscando lugares REALES alrededor de la ubicación GPS actual.
+  /// buscando lugares REALES alrededor de la ubicación GPS actual con Nominatim + Photon.
   Future<void> toggleMapFilter(TrackMapFilter filter) async {
     if (state.activeFilter == filter) {
       state = state.copyWith(
@@ -444,13 +439,20 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
     state = state.copyWith(
       activeFilter: filter,
       isLoadingPlaces: true,
+      nearbyPlaces: const <NearbyMapPlace>[],
       clearSelectedPlace: true,
     );
 
     final pos = state.currentGpsPosition;
-    var found = await _fetchFromGooglePlaces(pos, filter);
-    if (found.isEmpty) {
-      found = await _fetchFromOverpassOsm(pos, filter);
+    var found = await _fetchFromNominatimViewbox(pos, filter);
+    if (found.length < 4) {
+      final photonPlaces = await _fetchFromPhotonNearby(pos, filter);
+      final existingKeys = found.map((e) => e.id).toSet();
+      for (final p in photonPlaces) {
+        if (existingKeys.add(p.id)) {
+          found = <NearbyMapPlace>[...found, p];
+        }
+      }
     }
 
     if (state.activeFilter != filter) return;
@@ -458,94 +460,159 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       isLoadingPlaces: false,
       nearbyPlaces: found,
     );
+
+    // Ajustar el zoom para que todos los marcadores cercanos aparezcan de inmediato en el mapa
+    if (found.isNotEmpty) {
+      _fitCameraToPlaces(pos, found);
+    }
   }
 
-  Future<List<NearbyMapPlace>> _fetchFromGooglePlaces(
+  void _fitCameraToPlaces(LatLng center, List<NearbyMapPlace> places) {
+    final controller = _fullTrackMapController;
+    if (controller == null) return;
+    try {
+      var minLat = center.latitude;
+      var maxLat = center.latitude;
+      var minLng = center.longitude;
+      var maxLng = center.longitude;
+
+      for (final p in places.take(8)) {
+        if (p.position.latitude < minLat) minLat = p.position.latitude;
+        if (p.position.latitude > maxLat) maxLat = p.position.latitude;
+        if (p.position.longitude < minLng) minLng = p.position.longitude;
+        if (p.position.longitude > maxLng) maxLng = p.position.longitude;
+      }
+
+      if ((maxLat - minLat).abs() < 0.002 && (maxLng - minLng).abs() < 0.002) {
+        _animateMapTo(controller, center, zoom: 14.2);
+        return;
+      }
+
+      controller.animateCamera(
+        CameraUpdate.newLatLngBounds(
+          LatLngBounds(
+            southwest: LatLng(minLat, minLng),
+            northeast: LatLng(maxLat, maxLng),
+          ),
+          56,
+        ),
+      );
+    } catch (_) {
+      _animateMapTo(controller, center, zoom: 13.5);
+    }
+  }
+
+  /// Búsqueda acotada por bounding box (~8 km) en OpenStreetMap Nominatim
+  Future<List<NearbyMapPlace>> _fetchFromNominatimViewbox(
     LatLng center,
     TrackMapFilter filter,
   ) async {
     try {
+      const delta = 0.075; // ~8 km alrededor de tu ubicación real
+      final left = center.longitude - delta;
+      final right = center.longitude + delta;
+      final top = center.latitude + delta;
+      final bottom = center.latitude - delta;
+
       final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 5);
+        ..connectionTimeout = const Duration(seconds: 6);
       final uri = Uri.parse(
-        'https://maps.googleapis.com/maps/api/place/nearbysearch/json'
-        '?location=${center.latitude},${center.longitude}'
-        '&radius=5000&type=${filter.googlePlaceType}&language=es&key=$_mapsApiKey',
+        'https://nominatim.openstreetmap.org/search'
+        '?format=json&addressdetails=1&limit=15&bounded=1'
+        '&q=${Uri.encodeQueryComponent(filter.searchQuery)}'
+        '&viewbox=$left,$top,$right,$bottom',
       );
       final req = await client.getUrl(uri);
-      final resp = await req.close().timeout(const Duration(seconds: 5));
+      req.headers.set('User-Agent', 'RSDigitalCockpit/2.0 (Android)');
+      req.headers.set('Accept', 'application/json');
+      final resp = await req.close().timeout(const Duration(seconds: 6));
       final body = await resp.transform(utf8.decoder).join();
       client.close();
 
-      final json = jsonDecode(body) as Map<String, dynamic>;
-      if (json['status'] != 'OK') return const <NearbyMapPlace>[];
-      final results = json['results'] as List<dynamic>? ?? const <dynamic>[];
-
-      return results.take(15).map((item) {
+      final list = jsonDecode(body) as List<dynamic>;
+      final places = <NearbyMapPlace>[];
+      for (final item in list) {
         final m = item as Map<String, dynamic>;
-        final loc = (m['geometry'] as Map<String, dynamic>)['location']
-            as Map<String, dynamic>;
-        return NearbyMapPlace(
-          id: (m['place_id'] as String?) ??
-              '${loc['lat']}_${loc['lng']}',
-          name: (m['name'] as String?) ?? filter.label,
-          subtitle: (m['vicinity'] as String?) ?? filter.label,
-          filter: filter,
-          position: LatLng(
-            (loc['lat'] as num).toDouble(),
-            (loc['lng'] as num).toDouble(),
+        final lat = double.tryParse(m['lat']?.toString() ?? '');
+        final lon = double.tryParse(m['lon']?.toString() ?? '');
+        if (lat == null || lon == null) continue;
+
+        final displayName = (m['display_name'] as String?) ?? filter.label;
+        final parts = displayName.split(',').map((s) => s.trim()).toList();
+        final title = ((m['name'] as String?)?.trim().isNotEmpty ?? false)
+            ? (m['name'] as String).trim()
+            : (parts.isNotEmpty ? parts.first : filter.label);
+        final subtitle =
+            parts.length > 1 ? parts.skip(1).take(2).join(', ') : filter.label;
+
+        places.add(
+          NearbyMapPlace(
+            id: 'nom_${m['place_id'] ?? '${lat}_$lon'}',
+            name: title,
+            subtitle: subtitle,
+            filter: filter,
+            position: LatLng(lat, lon),
           ),
         );
-      }).toList();
+      }
+      return places;
     } catch (_) {
       return const <NearbyMapPlace>[];
     }
   }
 
-  Future<List<NearbyMapPlace>> _fetchFromOverpassOsm(
+  /// Respaldo ultrarrápido con Photon Komoot filtrado por distancia real <= 12 km
+  Future<List<NearbyMapPlace>> _fetchFromPhotonNearby(
     LatLng center,
     TrackMapFilter filter,
   ) async {
     try {
-      final radius = filter == TrackMapFilter.parking ? 3000 : 5000;
-      final query = '[out:json][timeout:8];('
-          'node["${filter.osmKey}"="${filter.osmValue}"](around:$radius,${center.latitude},${center.longitude});'
-          'way["${filter.osmKey}"="${filter.osmValue}"](around:$radius,${center.latitude},${center.longitude});'
-          ');out center 15;';
-
       final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 7);
+        ..connectionTimeout = const Duration(seconds: 6);
       final uri = Uri.parse(
-        'https://overpass-api.de/api/interpreter?data=${Uri.encodeQueryComponent(query)}',
+        'https://photon.komoot.io/api/'
+        '?q=${Uri.encodeQueryComponent(filter.searchQuery)}'
+        '&lat=${center.latitude}&lon=${center.longitude}&limit=15',
       );
       final req = await client.getUrl(uri);
-      req.headers.set('User-Agent', 'RSDigitalCockpit/2.0');
-      final resp = await req.close().timeout(const Duration(seconds: 7));
+      req.headers.set('User-Agent', 'RSDigitalCockpit/2.0 (Android)');
+      final resp = await req.close().timeout(const Duration(seconds: 6));
       final body = await resp.transform(utf8.decoder).join();
       client.close();
 
       final json = jsonDecode(body) as Map<String, dynamic>;
-      final elements = json['elements'] as List<dynamic>? ?? const <dynamic>[];
+      final features = json['features'] as List<dynamic>? ?? const <dynamic>[];
       final places = <NearbyMapPlace>[];
 
-      for (final elem in elements) {
-        final m = elem as Map<String, dynamic>;
-        final lat = (m['lat'] as num?)?.toDouble() ??
-            ((m['center'] as Map<String, dynamic>?)?['lat'] as num?)?.toDouble();
-        final lon = (m['lon'] as num?)?.toDouble() ??
-            ((m['center'] as Map<String, dynamic>?)?['lon'] as num?)?.toDouble();
-        if (lat == null || lon == null) continue;
+      for (final f in features) {
+        final m = f as Map<String, dynamic>;
+        final geom = m['geometry'] as Map<String, dynamic>?;
+        final coords = geom?['coordinates'] as List<dynamic>?;
+        if (coords == null || coords.length < 2) continue;
 
-        final tags = m['tags'] as Map<String, dynamic>? ?? const <String, dynamic>{};
-        final name = (tags['name'] as String?) ??
-            (tags['brand'] as String?) ??
-            filter.label;
-        final street = (tags['addr:street'] as String?) ?? filter.label;
+        final lon = (coords[0] as num).toDouble();
+        final lat = (coords[1] as num).toDouble();
+        final distMeters = Geolocator.distanceBetween(
+          center.latitude,
+          center.longitude,
+          lat,
+          lon,
+        );
+        if (distMeters > 12000.0) continue; // Solo resultados reales cercanos (<12 km)
+
+        final props =
+            m['properties'] as Map<String, dynamic>? ?? const <String, dynamic>{};
+        final name = (props['name'] as String?) ?? filter.label;
+        final street = (props['street'] as String?) ??
+            (props['district'] as String?) ??
+            (props['city'] as String?) ??
+            '${(distMeters / 1000.0).toStringAsFixed(1)} km';
+
         places.add(
           NearbyMapPlace(
-            id: 'osm_${m['id']}',
+            id: 'ph_${props['osm_id'] ?? '${lat}_$lon'}',
             name: name,
-            subtitle: street,
+            subtitle: '$street • ${(distMeters / 1000.0).toStringAsFixed(1)} km',
             filter: filter,
             position: LatLng(lat, lon),
           ),

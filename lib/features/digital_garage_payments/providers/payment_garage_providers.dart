@@ -1,8 +1,10 @@
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../auth_profile/providers/auth_profile_providers.dart';
+import '../../sensors/biometric_immobilizer_service.dart';
 import '../models/garage_models.dart';
 
 /// Catálogo oficial de refacciones para el Renault Clio II RS 172 (Motor F4R 736)
@@ -128,8 +130,39 @@ class DigitalGaragePaymentState {
 }
 
 class DigitalGaragePaymentNotifier extends Notifier<DigitalGaragePaymentState> {
+  static const String _savedTierPrefKey = 'rs_active_subscription_tier';
+
   @override
-  DigitalGaragePaymentState build() => const DigitalGaragePaymentState();
+  DigitalGaragePaymentState build() {
+    _loadPersistedSubscription();
+    return const DigitalGaragePaymentState();
+  }
+
+  Future<void> _loadPersistedSubscription() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedId = prefs.getString(_savedTierPrefKey);
+      if (savedId != null) {
+        final match = RsSubscriptionTier.values.where((t) => t.id == savedId);
+        if (match.isNotEmpty) {
+          final restoredTier = match.first;
+          state = state.copyWith(activeSubscription: restoredTier);
+          if (!restoredTier.unlocksTrophyProFeatures) {
+            ref
+                .read(clusterSkinProvider.notifier)
+                .selectSkin(ClusterSkinEdition.sagem2004Phase2);
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _persistSubscriptionTier(RsSubscriptionTier tier) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_savedTierPrefKey, tier.id);
+    } catch (_) {}
+  }
 
   void updateCardNumber(String val) =>
       state = state.copyWith(cardNumber: val, showCardBackSide: false);
@@ -163,15 +196,18 @@ class DigitalGaragePaymentNotifier extends Notifier<DigitalGaragePaymentState> {
     state = state.copyWith(cartQuantities: next);
   }
 
-  /// Procesa la suscripción a un Plan de Telemetría (Stripe / RevenueCat + Validación Luhn + Biometría)
+  /// Procesa la suscripción a un Plan de Telemetría (Validación Luhn + Biometría + Persistencia)
   Future<void> subscribeToPlan(RsSubscriptionTier tier) async {
     if (tier == RsSubscriptionTier.rsClubmanFree) {
+      await _persistSubscriptionTier(tier);
       state = state.copyWith(
         activeSubscription: tier,
-        paymentFeedback: 'Plan RS Clubman (Gratis) activado.',
+        paymentFeedback: 'Plan 1: RS Clubman (Gratis) activado.',
         isPaymentError: false,
       );
-      ref.read(clusterSkinProvider.notifier).selectSkin(ClusterSkinEdition.sagem2004Phase2);
+      ref
+          .read(clusterSkinProvider.notifier)
+          .selectSkin(ClusterSkinEdition.sagem2004Phase2);
       return;
     }
 
@@ -184,9 +220,26 @@ class DigitalGaragePaymentNotifier extends Notifier<DigitalGaragePaymentState> {
       return;
     }
 
+    // Autorización biométrica obligatoria para activar planes de pago
+    final bioOk = await ref
+        .read(biometricImmobilizerProvider.notifier)
+        .authenticateDriver(
+          reason:
+              'Autoriza con tu huella la activación de ${tier.title} (${tier.priceLabel})',
+        );
+    if (!bioOk) {
+      state = state.copyWith(
+        paymentFeedback:
+            'Activación cancelada: se requiere verificación biométrica.',
+        isPaymentError: true,
+      );
+      return;
+    }
+
     state = state.copyWith(
       isProcessingPayment: true,
-      paymentFeedback: 'Procesando suscripción con Stripe / RevenueCat y Firebase...',
+      paymentFeedback:
+          'Procesando suscripción con Stripe / RevenueCat y Firebase...',
       isPaymentError: false,
     );
 
@@ -197,9 +250,17 @@ class DigitalGaragePaymentNotifier extends Notifier<DigitalGaragePaymentState> {
       amountMxn: tier.amountMxn,
     );
 
-    // Si adquiere RS Trophy Pro, desbloquea automáticamente el skin Jean Ragnotti / Clio V6
+    await _persistSubscriptionTier(tier);
+
+    // Si activa Plan 3 (RS Trophy Pro), desbloquea skins exclusivos; si baja a Plan 2, vuelve a Sagem OEM
     if (tier == RsSubscriptionTier.rsTrophyAnnual) {
-      ref.read(clusterSkinProvider.notifier).selectSkin(ClusterSkinEdition.jeanRagnottiCup);
+      ref
+          .read(clusterSkinProvider.notifier)
+          .selectSkin(ClusterSkinEdition.jeanRagnottiCup);
+    } else {
+      ref
+          .read(clusterSkinProvider.notifier)
+          .selectSkin(ClusterSkinEdition.sagem2004Phase2);
     }
 
     state = state.copyWith(
@@ -207,12 +268,12 @@ class DigitalGaragePaymentNotifier extends Notifier<DigitalGaragePaymentState> {
       isProcessingPayment: false,
       completedOrders: <GarageOrderReceipt>[order, ...state.completedOrders],
       paymentFeedback:
-          '¡Suscripción ${tier.title} activa! Orden #${order.orderId} registrada en Firebase.',
+          '¡${tier.title} activado y guardado! Orden #${order.orderId} registrada en Firebase.',
       isPaymentError: false,
     );
   }
 
-  /// Procesa el Checkout del Carrito de Refacciones OEM Clio 172 y registra la orden en Firebase
+  /// Procesa el Checkout del Carrito de Refacciones OEM Clio 172 con biometría
   Future<void> checkoutSparePartsCart() async {
     if (state.totalCartItems == 0) {
       state = state.copyWith(
@@ -232,6 +293,19 @@ class DigitalGaragePaymentNotifier extends Notifier<DigitalGaragePaymentState> {
     }
 
     final totalMxn = state.cartSubtotalMxn;
+    final bioOk = await ref
+        .read(biometricImmobilizerProvider.notifier)
+        .authenticateDriver(
+          reason:
+              'Autoriza con tu huella el pago de refacciones por \$${totalMxn.toStringAsFixed(2)} MXN',
+        );
+    if (!bioOk) {
+      state = state.copyWith(
+        paymentFeedback: 'Pago cancelado por verificación biométrica.',
+        isPaymentError: true,
+      );
+      return;
+    }
 
     state = state.copyWith(
       isProcessingPayment: true,

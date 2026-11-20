@@ -2,17 +2,66 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../cockpit_dashboard/widgets/launcher_dock_widget.dart';
+import '../../digital_garage_payments/providers/payment_garage_providers.dart';
 import '../../sensors/g_force_sensor_service.dart';
 
-/// Medidor vectorial de Fuerzas G (`CustomPainter`), 100% libre de overflows.
+/// Medidor vectorial de Fuerzas G (`CustomPainter`) — Desbloqueado con Plan 3: RS Trophy Pro.
 class GForceBallWidget extends ConsumerWidget {
   const GForceBallWidget({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final gState = ref.watch(gForceSensorProvider);
+    final activePlan = ref.watch(
+      digitalGaragePaymentProvider.select((s) => s.activeSubscription),
+    );
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryAccent = Theme.of(context).colorScheme.primary;
+
+    if (!activePlan.unlocksTrophyProFeatures) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(
+                Icons.lock_outline_rounded,
+                size: 34,
+                color: RenaultSportPalette.siriusLiquidYellow,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'G-FORCE MONITOR',
+                style: AppTheme.renaultSportHeaderStyle(
+                  fontSize: 13.5,
+                  color: primaryAccent,
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Requiere Plan 3: RS Trophy Pro',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11.5),
+              ),
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: () => ref
+                    .read(cockpitTabProvider.notifier)
+                    .selectTab(CockpitSectionTab.digitalGarage),
+                icon: const Icon(Icons.workspace_premium_rounded, size: 16),
+                label: const Text('ACTIVAR EN GARAGE'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final gState = ref.watch(gForceSensorProvider);
 
     return Card(
       child: Padding(

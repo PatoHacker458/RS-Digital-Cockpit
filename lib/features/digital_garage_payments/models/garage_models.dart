@@ -7,8 +7,9 @@ enum RsSubscriptionTier {
     amountMxn: 0.0,
     billingCycle: 'Permanente',
     features: <String>[
-      'Telemetría básica K-Line (RPM 010C, Velocidad 010D, Temp 0105)',
+      'Telemetría básica K-Line (RPM 010C, Velocidad 010D, Temp 0105, TPS 0111)',
       'Shift-Light inteligente frío/caliente (5,000 / 6,750 RPM)',
+      'Blackbox Cloud (guardar y consultar historial de sesiones)',
       'Simulador de Circuito Clio 172 integrado',
     ],
   ),
@@ -20,8 +21,8 @@ enum RsSubscriptionTier {
     billingCycle: 'Mensual (RevenueCat / Stripe)',
     features: <String>[
       'Telemetría extendida Siemens Sirius 34 (MAP 010B, Avance 010E, Carga 0104)',
-      'Grabación en tiempo real en Firebase ("Blackbox Live")',
-      'Alertas térmicas y de correa de distribución vía FCM Push',
+      'Alertas automáticas de mantenimiento y kilometraje en el sistema Android',
+      'Todo lo incluido en el Plan 1: RS Clubman',
     ],
   ),
   rsTrophyAnnual(
@@ -31,10 +32,10 @@ enum RsSubscriptionTier {
     amountMxn: 899.0,
     billingCycle: 'Anual (Ahorra 25%)',
     features: <String>[
-      'Diagnóstico completo y borrado de códigos DTC (Modo 03 / Modo 04 Sirius 34)',
-      'Cronómetro de vuelta GPS nativo y telemetría de fuerzas G',
+      'Diagnóstico completo y borrado biométrico de códigos DTC (Modo 03 / 04)',
+      'Cronómetro de Laps GPS automático hacia Firebase y Monitor de Fuerzas G',
       'Skins exclusivos desbloqueados: Clio V6 Phase 2 & Jean Ragnotti Edition',
-      'Exportación completa de logs KWP2000',
+      'Todo lo incluido en el Plan 2: RS Cup Telemetry',
     ],
   );
 
@@ -44,6 +45,19 @@ enum RsSubscriptionTier {
   final double amountMxn;
   final String billingCycle;
   final List<String> features;
+
+  /// Plan 2 y Plan 3 habilitan telemetría extendida Sirius 34 y alertas de kilometraje
+  bool get unlocksExtendedSiriusPids =>
+      this == RsSubscriptionTier.rsCupMonthly ||
+      this == RsSubscriptionTier.rsTrophyAnnual;
+
+  bool get unlocksMileageAlerts =>
+      this == RsSubscriptionTier.rsCupMonthly ||
+      this == RsSubscriptionTier.rsTrophyAnnual;
+
+  /// Plan 3 habilita Skins exclusivos, Laps GPS, Fuerzas G y diagnóstico/borrado DTC
+  bool get unlocksTrophyProFeatures =>
+      this == RsSubscriptionTier.rsTrophyAnnual;
 
   const RsSubscriptionTier({
     required this.id,

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../core/theme/app_theme.dart';
 import '../cockpit_dashboard/widgets/launcher_dock_widget.dart';
+import '../digital_garage_payments/providers/payment_garage_providers.dart';
 import 'map_providers.dart';
 
 /// Vista **TRACK** (Mapa 2/3 con filtros simples + Tarjeta Laps GPS 1/3)
@@ -268,6 +269,28 @@ class TrackMapScreen extends ConsumerWidget {
                         height: 14,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       ),
+                    )
+                  else if (mapState.activeFilter != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xE6141820),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: RenaultSportPalette.oemShiftGreen
+                              .withValues(alpha: 0.6),
+                        ),
+                      ),
+                      child: Text(
+                        '${mapState.nearbyPlaces.length} encontrados',
+                        style: AppTheme.telemetryNumericStyle(
+                          fontSize: 10.5,
+                          color: RenaultSportPalette.oemShiftGreen,
+                        ),
+                      ),
                     ),
                 ],
               ),
@@ -360,7 +383,50 @@ class TrackMapScreen extends ConsumerWidget {
       ),
     );
 
-    final lapsCard = Card(
+    final activePlan = ref.watch(
+      digitalGaragePaymentProvider.select((s) => s.activeSubscription),
+    );
+
+    final Widget lapsCard = !activePlan.unlocksTrophyProFeatures
+        ? Card(
+            child: Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.lock_outline_rounded,
+                    size: 42,
+                    color: RenaultSportPalette.siriusLiquidYellow,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'CRONÓMETRO DE LAPS GPS',
+                    textAlign: TextAlign.center,
+                    style: AppTheme.renaultSportHeaderStyle(
+                      fontSize: 16,
+                      color: primary,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Establece tu punto de partida, registra vueltas automáticas por GPS y sincronízalas en Firebase activando el Plan 3: RS Trophy Pro.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12),
+                  ),
+                  const SizedBox(height: 14),
+                  ElevatedButton.icon(
+                    onPressed: () => ref
+                        .read(cockpitTabProvider.notifier)
+                        .selectTab(CockpitSectionTab.digitalGarage),
+                    icon: const Icon(Icons.workspace_premium_rounded, size: 18),
+                    label: const Text('ACTIVAR PLAN 3 EN GARAGE'),
+                  ),
+                ],
+              ),
+            ),
+          )
+        : Card(
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(

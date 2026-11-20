@@ -7,6 +7,7 @@ import '../../core/theme/theme_provider.dart';
 import '../auth_profile/providers/auth_profile_providers.dart';
 import '../auth_profile/screens/pilot_profile_screen.dart';
 import '../cloud_sync_fcm/blackbox_realtime_service.dart';
+import '../digital_garage_payments/providers/payment_garage_providers.dart';
 import '../digital_garage_payments/screens/digital_garage_screen.dart';
 import '../map_track/track_map_screen.dart';
 import '../multimedia/multimedia_hub_screen.dart';
@@ -399,66 +400,134 @@ class _Sirius34TelemetryColumn extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final sessionStats = ref.watch(telemetrySessionStatsProvider);
     final blackboxRecords = ref.watch(blackboxRealtimeProvider);
+    final activePlan = ref.watch(
+      digitalGaragePaymentProvider.select((s) => s.activeSubscription),
+    );
+    final hasExtendedPids = activePlan.unlocksExtendedSiriusPids;
     final primary = Theme.of(context).colorScheme.primary;
 
-    final metricsGrid = Card(
+    final tileCoolant = _KwpMetricTile(
+      label: 'TEMP MOTOR',
+      value: '${frame.coolantTempC.toStringAsFixed(0)} °C',
+      valueColor: frame.isEngineCold
+          ? RenaultSportPalette.coldEngineAmber
+          : RenaultSportPalette.oemShiftGreen,
+    );
+    final tileTps = _KwpMetricTile(
+      label: 'ACELERADOR',
+      value: '${frame.throttleTps.toStringAsFixed(0)} %',
+      valueColor: primary,
+    );
+    final tileMap = _KwpMetricTile(
+      label: 'PRESIÓN MAP',
+      value: hasExtendedPids ? '${frame.intakeMapKpa} kPa' : 'PLAN 2+',
+      valueColor: hasExtendedPids
+          ? RenaultSportPalette.siriusLiquidYellow
+          : Colors.white38,
+    );
+    final tileAdvance = _KwpMetricTile(
+      label: 'AVANCE',
+      value: hasExtendedPids
+          ? '${frame.timingAdvance.toStringAsFixed(1)}°'
+          : 'PLAN 2+',
+      valueColor:
+          hasExtendedPids ? RenaultSportPalette.oemShiftGreen : Colors.white38,
+    );
+    final tileLoad = _KwpMetricTile(
+      label: 'CARGA ECU',
+      value: hasExtendedPids
+          ? '${frame.engineLoad.toStringAsFixed(0)} %'
+          : 'PLAN 2+',
+      valueColor: hasExtendedPids ? primary : Colors.white38,
+    );
+    final tileBatteryIat = _KwpMetricTile(
+      label: 'BATERÍA / IAT',
+      value:
+          '${frame.batteryVolts.toStringAsFixed(1)}V • ${frame.intakeAirTempC.toStringAsFixed(0)}°C',
+      valueColor: Colors.cyanAccent,
+    );
+
+    final Widget metricsGrid = Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'PARÁMETROS MOTOR F4R',
-              style: AppTheme.renaultSportHeaderStyle(
-                fontSize: 13,
-                color: primary,
-              ),
-            ),
-            const SizedBox(height: 8),
-            GridView.count(
-              crossAxisCount: 2,
-              mainAxisSpacing: 6,
-              crossAxisSpacing: 6,
-              childAspectRatio: 2.1,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _KwpMetricTile(
-                  label: 'TEMP MOTOR',
-                  value: '${frame.coolantTempC.toStringAsFixed(0)} °C',
-                  valueColor: frame.isEngineCold
-                      ? RenaultSportPalette.coldEngineAmber
-                      : RenaultSportPalette.oemShiftGreen,
+                Flexible(
+                  child: Text(
+                    'PARÁMETROS MOTOR F4R',
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTheme.renaultSportHeaderStyle(
+                      fontSize: 13,
+                      color: primary,
+                    ),
+                  ),
                 ),
-                _KwpMetricTile(
-                  label: 'ACELERADOR',
-                  value: '${frame.throttleTps.toStringAsFixed(0)} %',
-                  valueColor: primary,
-                ),
-                _KwpMetricTile(
-                  label: 'PRESIÓN MAP',
-                  value: '${frame.intakeMapKpa} kPa',
-                  valueColor: RenaultSportPalette.siriusLiquidYellow,
-                ),
-                _KwpMetricTile(
-                  label: 'AVANCE',
-                  value: '${frame.timingAdvance.toStringAsFixed(1)}°',
-                  valueColor: RenaultSportPalette.oemShiftGreen,
-                ),
-                _KwpMetricTile(
-                  label: 'CARGA ECU',
-                  value: '${frame.engineLoad.toStringAsFixed(0)} %',
-                  valueColor: primary,
-                ),
-                _KwpMetricTile(
-                  label: 'BATERÍA / IAT',
-                  value:
-                      '${frame.batteryVolts.toStringAsFixed(1)}V • ${frame.intakeAirTempC.toStringAsFixed(0)}°C',
-                  valueColor: Colors.cyanAccent,
-                ),
+                if (!hasExtendedPids)
+                  const Icon(
+                    Icons.lock_outline_rounded,
+                    size: 14,
+                    color: Colors.white54,
+                  ),
               ],
             ),
+            const SizedBox(height: 8),
+            if (isScrollableMode)
+              GridView.count(
+                crossAxisCount: 2,
+                mainAxisSpacing: 6,
+                crossAxisSpacing: 6,
+                childAspectRatio: 2.0,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  tileCoolant,
+                  tileTps,
+                  tileMap,
+                  tileAdvance,
+                  tileLoad,
+                  tileBatteryIat,
+                ],
+              )
+            else ...[
+              // En modo Tablet apaisado: expandir uniformemente las 3 filas
+              // para que no quede espacio en blanco debajo de Blackbox Cloud
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: tileCoolant),
+                    const SizedBox(width: 6),
+                    Expanded(child: tileTps),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: tileMap),
+                    const SizedBox(width: 6),
+                    Expanded(child: tileAdvance),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 6),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: tileLoad),
+                    const SizedBox(width: 6),
+                    Expanded(child: tileBatteryIat),
+                  ],
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -484,31 +553,9 @@ class _Sirius34TelemetryColumn extends ConsumerWidget {
                     ),
                   ),
                 ),
-                InkWell(
-                  onTap: () => _openBlackboxHistorySheet(context),
-                  borderRadius: BorderRadius.circular(6),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: RenaultSportPalette.oemShiftGreen
-                          .withValues(alpha: 0.16),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                        color: RenaultSportPalette.oemShiftGreen
-                            .withValues(alpha: 0.6),
-                      ),
-                    ),
-                    child: Text(
-                      'VER (${blackboxRecords.length})',
-                      style: AppTheme.telemetryNumericStyle(
-                        fontSize: 10,
-                        color: RenaultSportPalette.oemShiftGreen,
-                      ),
-                    ),
-                  ),
+                Text(
+                  '${blackboxRecords.length} guardadas',
+                  style: const TextStyle(fontSize: 10.5, color: Colors.white60),
                 ),
               ],
             ),
@@ -592,14 +639,14 @@ class _Sirius34TelemetryColumn extends ConsumerWidget {
       );
     }
 
-    return SingleChildScrollView(
-      child: Column(
-        children: [
-          metricsGrid,
-          const SizedBox(height: 8),
-          blackboxCard,
-        ],
-      ),
+    // Columna de altura completa: Parámetros se expande y Blackbox Cloud toca abajo sin hueco
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: metricsGrid),
+        const SizedBox(height: 8),
+        blackboxCard,
+      ],
     );
   }
 }

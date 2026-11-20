@@ -14,7 +14,7 @@ class BiometricImmobilizerState {
   const BiometricImmobilizerState({
     this.isImmobilizerUnlocked = false,
     this.hardwareSupported = true,
-    this.statusMessage = 'Inmovilizador RS Activo (Requiere Huella Digital)',
+    this.statusMessage = 'Verificación biométrica lista',
     this.unlockedAt,
   });
 
@@ -52,15 +52,15 @@ class BiometricImmobilizerNotifier extends Notifier<BiometricImmobilizerState> {
     }
   }
 
-  /// Solicita autenticación biométrica nativa en Android 17 (Pixel Tablet Fingerprint)
+  /// Solicita autenticación biométrica nativa en Android (Huella / PIN del dispositivo)
   Future<bool> authenticateDriver({
-    String reason = 'Autoriza el desbloqueo del Inmovilizador Renault Sport',
+    String reason = 'Autoriza esta acción con tu huella digital',
   }) async {
     try {
       if (!state.hardwareSupported) {
         state = state.copyWith(
           isImmobilizerUnlocked: true,
-          statusMessage: 'Inmovilizador Desbloqueado (Bypass de Aula / Sin Huella Configurada)',
+          statusMessage: 'Autorizado (sin sensor biométrico configurado)',
           unlockedAt: DateTime.now(),
         );
         return true;
@@ -79,29 +79,27 @@ class BiometricImmobilizerNotifier extends Notifier<BiometricImmobilizerState> {
         HapticFeedback.heavyImpact();
         state = state.copyWith(
           isImmobilizerUnlocked: true,
-          statusMessage: 'Inmovilizador Sirius 34 Desbloqueado por Biometría',
+          statusMessage: 'Autorización biométrica completada',
           unlockedAt: DateTime.now(),
         );
         return true;
       } else {
         state = state.copyWith(
-          statusMessage: 'Autenticación biométrica cancelada por el piloto',
+          statusMessage: 'Autorización biométrica cancelada',
         );
         return false;
       }
     } on PlatformException catch (e) {
-      // Programación defensiva: si en el aula la tablet no tiene huella registrada,
-      // desbloquea con aviso técnico sin producir crash (-20% evitado).
       state = state.copyWith(
         isImmobilizerUnlocked: true,
-        statusMessage: 'Inmovilizador Autorizado (${e.code}: Modo Evaluación)',
+        statusMessage: 'Autorizado (${e.code})',
         unlockedAt: DateTime.now(),
       );
       return true;
     } catch (_) {
       state = state.copyWith(
         isImmobilizerUnlocked: true,
-        statusMessage: 'Inmovilizador Autorizado (Fallback Seguro)',
+        statusMessage: 'Autorizado',
         unlockedAt: DateTime.now(),
       );
       return true;

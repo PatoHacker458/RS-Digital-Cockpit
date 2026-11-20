@@ -3,6 +3,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../digital_garage_payments/providers/payment_garage_providers.dart';
 
 /// Handler de Segundo Plano de Nivel Superior para FCM Background.
 @pragma('vm:entry-point')
@@ -233,7 +234,8 @@ class FcmTopicsNotifier extends Notifier<FcmTopicsState> {
   /// Evalúa automáticamente si el kilometraje actual alcanzó algún umbral de servicio
   /// (vencido <= 0 km o próximo <= 500 km) y dispara la notificación nativa del sistema Android.
   Future<void> _evaluateAutomaticMileageAlerts() async {
-    if (!state.maintenanceSubscribed) return;
+    final activePlan = ref.read(digitalGaragePaymentProvider).activeSubscription;
+    if (!state.maintenanceSubscribed || !activePlan.unlocksMileageAlerts) return;
 
     final checks = <({String id, String name, double remaining})>[
       (

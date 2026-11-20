@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../digital_garage_payments/providers/payment_garage_providers.dart';
+import '../../sensors/biometric_immobilizer_service.dart';
 import '../../telemetry/providers/telemetry_providers.dart';
+import 'launcher_dock_widget.dart';
 
 /// Apartado **ECU**:
 /// 1) Switch Maestro ON/OFF para activar o apagar el Bluetooth OBD2 (evitando interferencia con audio).
@@ -17,6 +20,10 @@ class DtcDiagnosticSheet extends ConsumerWidget {
     final obdNotifier = ref.read(obdConnectionModeProvider.notifier);
     final dtcAsync = ref.watch(sirius34DtcProvider);
     final terminalLogsAsync = ref.watch(obdTerminalLogsProvider);
+    final activePlan = ref.watch(
+      digitalGaragePaymentProvider.select((s) => s.activeSubscription),
+    );
+    final hasDtcProAccess = activePlan.unlocksTrophyProFeatures;
     final primary = Theme.of(context).colorScheme.primary;
     final isSimulator = adapterState.mode == ObdConnectionMode.trackSimulator;
 
@@ -323,7 +330,8 @@ class DtcDiagnosticSheet extends ConsumerWidget {
                                 runSpacing: 8,
                                 children: [
                                   OutlinedButton.icon(
-                                    onPressed: adapterState.ecuEnabled
+                                    onPressed: adapterState.ecuEnabled &&
+                                            hasDtcProAccess
                                         ? () => ref
                                             .read(sirius34DtcProvider.notifier)
                                             .scanDtcCodes()
@@ -333,13 +341,30 @@ class DtcDiagnosticSheet extends ConsumerWidget {
                                     label: const Text('LEER DTC'),
                                   ),
                                   ElevatedButton.icon(
-                                    onPressed: adapterState.ecuEnabled
-                                        ? () => ref
-                                            .read(sirius34DtcProvider.notifier)
-                                            .clearAllDtcCodes()
+                                    onPressed: adapterState.ecuEnabled &&
+                                            hasDtcProAccess
+                                        ? () async {
+                                            final bioOk = await ref
+                                                .read(
+                                                  biometricImmobilizerProvider
+                                                      .notifier,
+                                                )
+                                                .authenticateDriver(
+                                                  reason:
+                                                      'Autoriza con tu huella borrar los códigos DTC de la ECU',
+                                                );
+                                            if (bioOk) {
+                                              await ref
+                                                  .read(
+                                                    sirius34DtcProvider
+                                                        .notifier,
+                                                  )
+                                                  .clearAllDtcCodes();
+                                            }
+                                          }
                                         : null,
                                     icon: const Icon(
-                                      Icons.delete_sweep_rounded,
+                                      Icons.fingerprint_rounded,
                                       size: 16,
                                     ),
                                     label: const Text('BORRAR DTC'),
@@ -349,7 +374,43 @@ class DtcDiagnosticSheet extends ConsumerWidget {
                             ],
                           ),
                           const SizedBox(height: 12),
-                          dtcAsync.when(
+                          if (!hasDtcProAccess)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 20),
+                              child: Center(
+                                child: Column(
+                                  children: [
+                                    const Icon(
+                                      Icons.lock_outline_rounded,
+                                      size: 36,
+                                      color: RenaultSportPalette
+                                          .siriusLiquidYellow,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    const Text(
+                                      'Lectura y borrado biométrico DTC disponibles en Plan 3: RS Trophy Pro',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(fontSize: 12.5),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    OutlinedButton.icon(
+                                      onPressed: () => ref
+                                          .read(cockpitTabProvider.notifier)
+                                          .selectTab(
+                                            CockpitSectionTab.digitalGarage,
+                                          ),
+                                      icon: const Icon(
+                                        Icons.workspace_premium_rounded,
+                                        size: 16,
+                                      ),
+                                      label: const Text('ACTIVAR EN GARAGE'),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          else
+                            dtcAsync.when(
                             data: (dtcs) {
                               if (dtcs.isEmpty) {
                                 return const Padding(

@@ -227,7 +227,7 @@ class DigitalGarageScreen extends ConsumerWidget {
 
               const SizedBox(height: 14),
 
-              // Selector de Carátula (Skin) del Tacómetro
+              // Selector de Carátula (Skin) del Tacómetro (Skins exclusivos requieren Plan 3: RS Trophy Pro)
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(14),
@@ -244,16 +244,26 @@ class DigitalGarageScreen extends ConsumerWidget {
                         ),
                       ),
                       ...ClusterSkinEdition.values.map((skin) {
-                        final selected = skin == activeSkin;
+                        final isExclusive =
+                            skin != ClusterSkinEdition.sagem2004Phase2;
+                        final isLocked = isExclusive &&
+                            !garageState
+                                .activeSubscription.unlocksTrophyProFeatures;
+                        final selected = skin == activeSkin && !isLocked;
                         return ChoiceChip(
+                          avatar: isLocked
+                              ? const Icon(Icons.lock_outline_rounded, size: 15)
+                              : null,
                           label: Text(
-                            skin.label,
+                            isLocked ? '${skin.label} (Plan 3)' : skin.label,
                             style: const TextStyle(fontSize: 12),
                           ),
                           selected: selected,
-                          onSelected: (_) => ref
-                              .read(clusterSkinProvider.notifier)
-                              .selectSkin(skin),
+                          onSelected: isLocked
+                              ? null
+                              : (_) => ref
+                                  .read(clusterSkinProvider.notifier)
+                                  .selectSkin(skin),
                         );
                       }),
                     ],

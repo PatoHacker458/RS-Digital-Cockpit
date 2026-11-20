@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../cloud_sync_fcm/fcm_notification_service.dart';
+import '../../digital_garage_payments/providers/payment_garage_providers.dart';
 import '../providers/auth_profile_providers.dart';
 
 /// Apartado **ACCOUNT**:
@@ -59,6 +60,10 @@ class PilotProfileScreen extends ConsumerWidget {
     final formState = ref.watch(authUiFormProvider);
     final fcmTopics = ref.watch(fcmTopicsProvider);
     final fcmNotifier = ref.read(fcmTopicsProvider.notifier);
+    final activePlan = ref.watch(
+      digitalGaragePaymentProvider.select((s) => s.activeSubscription),
+    );
+    final hasMileageAlertsPlan = activePlan.unlocksMileageAlerts;
     final primary = Theme.of(context).colorScheme.primary;
 
     if (profile == null) {
@@ -401,14 +406,25 @@ class PilotProfileScreen extends ConsumerWidget {
                       const SizedBox(height: 6),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Alertas automáticas por kilometraje'),
-                        subtitle: const Text(
-                          'Notifica automáticamente en Android al acercarse a cada servicio.',
-                          style: TextStyle(fontSize: 12),
+                        title: Text(
+                          hasMileageAlertsPlan
+                              ? 'Alertas automáticas por kilometraje'
+                              : 'Alertas automáticas por kilometraje (Plan 2+)',
                         ),
-                        value: fcmTopics.maintenanceSubscribed,
-                        onChanged: (val) =>
-                            fcmNotifier.toggleTopic('clio_rs_maintenance', val),
+                        subtitle: Text(
+                          hasMileageAlertsPlan
+                              ? 'Notifica automáticamente en Android al acercarse a cada servicio.'
+                              : 'Activa Plan 2 o Plan 3 en Garage para recibir avisos automáticos por kilometraje.',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        value: hasMileageAlertsPlan &&
+                            fcmTopics.maintenanceSubscribed,
+                        onChanged: hasMileageAlertsPlan
+                            ? (val) => fcmNotifier.toggleTopic(
+                                  'clio_rs_maintenance',
+                                  val,
+                                )
+                            : null,
                       ),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,

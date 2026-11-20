@@ -48,11 +48,33 @@ final themeModeProvider = NotifierProvider<ThemeModeNotifier, ThemeMode>(
 
 /// Notifier para el Skin de los Relojes (Sagem 2004, Ragnotti Cup, Clio V6)
 class ClusterSkinNotifier extends Notifier<ClusterSkinEdition> {
-  @override
-  ClusterSkinEdition build() => ClusterSkinEdition.sagem2004Phase2;
+  static const String _skinPrefKey = 'rs_active_cluster_skin';
 
-  void selectSkin(ClusterSkinEdition skin) {
+  @override
+  ClusterSkinEdition build() {
+    _loadSavedSkin();
+    return ClusterSkinEdition.sagem2004Phase2;
+  }
+
+  Future<void> _loadSavedSkin() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedName = prefs.getString(_skinPrefKey);
+      if (savedName != null) {
+        final match = ClusterSkinEdition.values.where((s) => s.name == savedName);
+        if (match.isNotEmpty) {
+          state = match.first;
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> selectSkin(ClusterSkinEdition skin) async {
     state = skin;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_skinPrefKey, skin.name);
+    } catch (_) {}
   }
 }
 
