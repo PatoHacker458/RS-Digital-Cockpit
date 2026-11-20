@@ -13,6 +13,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.location.Geocoder
 import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.session.MediaController
@@ -33,20 +35,20 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
 /**
  * Servicio puente del sistema Android para permitir que `MediaSessionManager`
- * lea la carátula (Bitmap), canción, artista y progreso del reproductor activo.
+ * lea la carátula (Bitmap / URI), canción, artista, progreso y acciones personalizadas
+ * (Random / Repeat) del reproductor activo.
  */
 class RsMediaNotificationListenerService : NotificationListenerService()
 
 /**
  * MainActivity para RS Digital Cockpit (`com.rs.digital.cockpit`).
- * Soporta Biometría (local_auth), Stripe, Car Launcher Dock, Lector del Reproductor
- * Multimedia del Sistema Android (`MediaSessionManager` + `AudioManager`) y Bluetooth Classic RFCOMM (ELM327).
  */
 class MainActivity : FlutterFragmentActivity() {
 
@@ -61,11 +63,13 @@ class MainActivity : FlutterFragmentActivity() {
     private var inputStream: InputStream? = null
     private var outputStream: OutputStream? = null
     private val ioExecutor = Executors.newSingleThreadExecutor()
+    private val geocodeExecutor = Executors.newSingleThreadExecutor()
     private val ioLock = Any()
 
-    // Caché ligera de carátula para no recomprimir el mismo Bitmap en cada ciclo
+    // Caché inteligente de carátula: se invalida si cambia la canción O si el bitmap era null
     private var cachedArtworkKey: String = ""
     private var cachedArtworkBytes: ByteArray? = null
+    private var cachedArtworkUri: String? = null
 
     // Fallback por Broadcast para reproductores (Spotify / Android Music)
     private var broadcastTitle: String? = null
@@ -139,7 +143,7 @@ class MainActivity : FlutterFragmentActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        // 1. Canal del Car Launcher + Reproductor del Sistema Android + Volumen/ATT
+        // 1. Canal del Car Launcher + Reproductor del Sistema Android + Volumen Silencioso + Geocoder
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LAUNCHER_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -160,6 +164,14 @@ class MainActivity : FlutterFragmentActivity() {
                         val positionMs = (call.argument<Number>("positionMs")?.toLong()) ?: 0L
                         result.success(seekActiveMediaController(positionMs))
                     }
+                    "toggleShuffle" -> {
+                        val nextEnabled = call.argument<Boolean>("enabled") ?: true
+                        result.success(triggerMediaShuffle(nextEnabled))
+                    }
+                    "toggleRepeat" -> {
+                        val nextMode = call.argument<Int>("mode") ?: 1
+                        result.success(triggerMediaRepeat(nextMode))
+                    }
                     "openMediaListenerSettings" -> {
                         try {
                             val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
@@ -176,8 +188,8 @@ class MainActivity : FlutterFragmentActivity() {
                     }
                     "setVolume" -> {
                         val percent = call.argument<Double>("percent") ?: 0.5
-                        val showUi = call.argument<Boolean>("showUi") ?: false
-                        result.success(setMediaVolumePercent(percent, showUi))
+                        // flags = 0 para NO mostrar el popup nativo de volumen de Android al mover el slider
+                        result.success(setMediaVolumePercent(percent))
                     }
                     "adjustVolumeStep" -> {
                         val delta = call.argument<Int>("delta") ?: 0
@@ -187,6 +199,14 @@ class MainActivity : FlutterFragmentActivity() {
                     "sendMediaKey" -> {
                         val command = call.argument<String>("command") ?: "play_pause"
                         result.success(dispatchSystemMediaKey(command))
+                    }
+                    "reverseGeocode" -> {
+                        val lat = call.argument<Double>("lat") ?: 0.0
+                        val lng = call.argument<Double>("lng") ?: 0.0
+                        geocodeExecutor.execute {
+                            val street = resolveStreetNameNative(lat, lng)
+                            runOnUiThread { result.success(street) }
+                        }
                     }
                     "openHomeLauncherSettings" -> {
                         try {
@@ -271,6 +291,32 @@ class MainActivity : FlutterFragmentActivity() {
             }
     }
 
+    @Suppress("DEPRECATION")
+    private fun resolveStreetNameNative(lat: Double, lng: Double): String {
+        return try {
+            val geocoder = Geocoder(this, Locale.getDefault())
+            val addresses = geocoder.getFromLocation(lat, lng, 1)
+            if (!addresses.isNullOrEmpty()) {
+                val addr = addresses[0]
+                val street = addr.thoroughfare?.trim()
+                val subLoc = addr.subLocality?.trim()
+                val locality = addr.locality?.trim()
+                when {
+                    !street.isNullOrEmpty() && !locality.isNullOrEmpty() -> "$street, $locality"
+                    !street.isNullOrEmpty() -> street
+                    !subLoc.isNullOrEmpty() && !locality.isNullOrEmpty() -> "$subLoc, $locality"
+                    !locality.isNullOrEmpty() -> locality
+                    !addr.getAddressLine(0).isNullOrEmpty() -> addr.getAddressLine(0)
+                    else -> "Circuito GPS"
+                }
+            } else {
+                "Circuito GPS"
+            }
+        } catch (_: Exception) {
+            "Circuito GPS"
+        }
+    }
+
     private fun isNotificationListenerEnabled(): Boolean {
         return try {
             val enabledListeners = Settings.Secure.getString(
@@ -293,6 +339,8 @@ class MainActivity : FlutterFragmentActivity() {
             if (controllers.isEmpty()) return null
             controllers.firstOrNull {
                 it.playbackState?.state == PlaybackState.STATE_PLAYING
+            } ?: controllers.firstOrNull {
+                it.metadata != null
             } ?: controllers.firstOrNull()
         } catch (_: Exception) {
             null
@@ -346,15 +394,39 @@ class MainActivity : FlutterFragmentActivity() {
                 positionMs = positionMs.coerceAtLeast(0L)
             }
 
-            // Extraer Bitmap de la carátula del álbum
-            val artKey = "${controller.packageName}|$title|$artist|$album"
-            if (artKey != cachedArtworkKey) {
-                val bmp: Bitmap? = meta?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
+            // Extraer Bitmap / URI de la carátula.
+            // IMPORTANTE: Si cachedArtworkBytes es null (porque Spotify primero envía el título y
+            // 300ms después carga el Bitmap), reintentamos leer el Bitmap en cada ciclo hasta obtenerlo.
+            val artUri = meta?.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI)
+                ?: meta?.getString(MediaMetadata.METADATA_KEY_ART_URI)
+                ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_ICON_URI)
+
+            val artKey = "${controller.packageName}|$title|$artist|$album|${artUri ?: ""}"
+            if (artKey != cachedArtworkKey || (cachedArtworkBytes == null && cachedArtworkUri == null)) {
+                val directBmp: Bitmap? = meta?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART)
                     ?: meta?.getBitmap(MediaMetadata.METADATA_KEY_ART)
                     ?: meta?.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
-                cachedArtworkBytes = if (bmp != null) compressArtworkBitmap(bmp) else null
-                cachedArtworkKey = artKey
+                    ?: loadBitmapFromContentUri(artUri)
+
+                if (directBmp != null) {
+                    cachedArtworkBytes = compressArtworkBitmap(directBmp)
+                    cachedArtworkUri = artUri
+                    cachedArtworkKey = artKey
+                } else if (!artUri.isNullOrEmpty() && (artUri.startsWith("http://") || artUri.startsWith("https://"))) {
+                    cachedArtworkBytes = null
+                    cachedArtworkUri = artUri
+                    cachedArtworkKey = artKey
+                } else if (artKey != cachedArtworkKey) {
+                    // Cambió la canción pero el bitmap aún no llega: limpiar anterior y dejar listo para reintento
+                    cachedArtworkBytes = null
+                    cachedArtworkUri = null
+                    cachedArtworkKey = artKey
+                }
             }
+
+            val customActionNames = pb?.customActions?.map {
+                "${it.action}:${it.name}".lowercase(Locale.ROOT)
+            } ?: emptyList()
 
             val srcPkg = controller.packageName
             return mapOf(
@@ -369,11 +441,18 @@ class MainActivity : FlutterFragmentActivity() {
                 "sourcePackage" to srcPkg,
                 "sourceAppName" to resolveAppName(srcPkg),
                 "albumArtBytes" to cachedArtworkBytes,
+                "albumArtUri" to cachedArtworkUri,
+                "supportsShuffle" to customActionNames.any { it.contains("shuffle") },
+                "supportsRepeat" to customActionNames.any { it.contains("repeat") },
                 "volume" to volumeInfo
             )
         }
 
-        // Fallback si aún no se activó el acceso o si solo hay datos de Broadcast / AudioManager
+        // Si se cerró la sesión de música, limpiar caché de carátula para que al volver a abrirla se recargue
+        cachedArtworkKey = ""
+        cachedArtworkBytes = null
+        cachedArtworkUri = null
+
         val audioActive = (volumeInfo["isMusicActive"] as? Boolean) ?: broadcastIsPlaying
         var estPos = broadcastPositionMs
         if (broadcastIsPlaying && broadcastPositionTimestamp > 0L) {
@@ -387,7 +466,7 @@ class MainActivity : FlutterFragmentActivity() {
             "hasPermission" to hasPermission,
             "hasActiveSession" to (broadcastTitle != null || audioActive),
             "title" to (broadcastTitle ?: if (audioActive) "Audio en reproducción" else "Reproductor en espera"),
-            "artist" to (broadcastArtist ?: if (hasPermission) "Inicia una canción en tu reproductor favorito" else "Conecta el lector multimedia para ver carátula y título"),
+            "artist" to (broadcastArtist ?: if (hasPermission) "Inicia una canción en tu reproductor favorito" else "Habilita el lector para mostrar carátula y progreso"),
             "album" to (broadcastAlbum ?: ""),
             "durationMs" to broadcastDurationMs,
             "positionMs" to estPos,
@@ -395,13 +474,27 @@ class MainActivity : FlutterFragmentActivity() {
             "sourcePackage" to (broadcastPackage ?: "com.spotify.music"),
             "sourceAppName" to resolveAppName(broadcastPackage),
             "albumArtBytes" to null,
+            "albumArtUri" to null,
+            "supportsShuffle" to false,
+            "supportsRepeat" to false,
             "volume" to volumeInfo
         )
     }
 
+    private fun loadBitmapFromContentUri(uriStr: String?): Bitmap? {
+        if (uriStr.isNullOrEmpty() || !uriStr.startsWith("content://")) return null
+        return try {
+            contentResolver.openInputStream(Uri.parse(uriStr))?.use { stream ->
+                BitmapFactory.decodeStream(stream)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun compressArtworkBitmap(source: Bitmap): ByteArray? {
         return try {
-            val maxDim = 360
+            val maxDim = 600
             val width = source.width
             val height = source.height
             val scaled = if (width > maxDim || height > maxDim) {
@@ -413,7 +506,7 @@ class MainActivity : FlutterFragmentActivity() {
                 source
             }
             val out = ByteArrayOutputStream()
-            scaled.compress(Bitmap.CompressFormat.JPEG, 86, out)
+            scaled.compress(Bitmap.CompressFormat.JPEG, 90, out)
             out.toByteArray()
         } catch (_: Exception) {
             null
@@ -424,6 +517,66 @@ class MainActivity : FlutterFragmentActivity() {
         return try {
             val controller = getPrimaryMediaController() ?: return false
             controller.transportControls.seekTo(positionMs.coerceAtLeast(0L))
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun triggerMediaShuffle(enabled: Boolean): Boolean {
+        return try {
+            val controller = getPrimaryMediaController() ?: return false
+            val actions = controller.playbackState?.customActions ?: emptyList()
+            val shuffleAction = actions.firstOrNull { action ->
+                action.action.contains("shuffle", ignoreCase = true) ||
+                    action.name.toString().contains("shuffle", ignoreCase = true) ||
+                    action.name.toString().contains("aleatori", ignoreCase = true)
+            }
+            if (shuffleAction != null) {
+                controller.transportControls.sendCustomAction(shuffleAction, null)
+                return true
+            }
+            // Fallback estándar de MediaSessionCompat (AndroidX Media)
+            val bundle = Bundle().apply {
+                putInt(
+                    "android.support.v4.media.session.action.ARGUMENT_SHUFFLE_MODE",
+                    if (enabled) 1 else 0
+                )
+            }
+            controller.transportControls.sendCustomAction(
+                "android.support.v4.media.session.action.SET_SHUFFLE_MODE",
+                bundle
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun triggerMediaRepeat(mode: Int): Boolean {
+        return try {
+            val controller = getPrimaryMediaController() ?: return false
+            val actions = controller.playbackState?.customActions ?: emptyList()
+            val repeatAction = actions.firstOrNull { action ->
+                action.action.contains("repeat", ignoreCase = true) ||
+                    action.name.toString().contains("repeat", ignoreCase = true) ||
+                    action.name.toString().contains("repetir", ignoreCase = true)
+            }
+            if (repeatAction != null) {
+                controller.transportControls.sendCustomAction(repeatAction, null)
+                return true
+            }
+            // Fallback estándar de MediaSessionCompat (0 = OFF, 1 = ONE, 2 = ALL)
+            val bundle = Bundle().apply {
+                putInt(
+                    "android.support.v4.media.session.action.ARGUMENT_REPEAT_MODE",
+                    mode.coerceIn(0, 2)
+                )
+            }
+            controller.transportControls.sendCustomAction(
+                "android.support.v4.media.session.action.SET_REPEAT_MODE",
+                bundle
+            )
             true
         } catch (_: Exception) {
             false
@@ -459,13 +612,16 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
-    private fun setMediaVolumePercent(percent: Double, showUi: Boolean): Map<String, Any> {
+    /**
+     * Ajusta el volumen multimedia SIN pasar FLAG_SHOW_UI (flags = 0),
+     * evitando que aparezca el popup flotante del volumen del sistema Android.
+     */
+    private fun setMediaVolumePercent(percent: Double): Map<String, Any> {
         return try {
             val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
             val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
             val targetStep = (percent.coerceIn(0.0, 1.0) * max).roundToInt().coerceIn(0, max)
-            val flags = if (showUi) AudioManager.FLAG_SHOW_UI else 0
-            audio.setStreamVolume(AudioManager.STREAM_MUSIC, targetStep, flags)
+            audio.setStreamVolume(AudioManager.STREAM_MUSIC, targetStep, 0)
             readAudioVolumeState()
         } catch (_: Exception) {
             readAudioVolumeState()
@@ -479,19 +635,19 @@ class MainActivity : FlutterFragmentActivity() {
                 audio.adjustStreamVolume(
                     AudioManager.STREAM_MUSIC,
                     AudioManager.ADJUST_TOGGLE_MUTE,
-                    AudioManager.FLAG_SHOW_UI
+                    0
                 )
             } else if (delta > 0) {
                 audio.adjustStreamVolume(
                     AudioManager.STREAM_MUSIC,
                     AudioManager.ADJUST_RAISE,
-                    AudioManager.FLAG_SHOW_UI
+                    0
                 )
             } else if (delta < 0) {
                 audio.adjustStreamVolume(
                     AudioManager.STREAM_MUSIC,
                     AudioManager.ADJUST_LOWER,
-                    AudioManager.FLAG_SHOW_UI
+                    0
                 )
             }
             readAudioVolumeState()

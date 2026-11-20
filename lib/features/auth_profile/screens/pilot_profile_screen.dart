@@ -7,10 +7,50 @@ import '../../cloud_sync_fcm/fcm_notification_service.dart';
 import '../providers/auth_profile_providers.dart';
 
 /// Apartado **ACCOUNT**:
-/// Perfil del piloto, gestión de avatar (habilitada para cuentas Email y bloqueada
-/// para proveedores Google/GitHub) y notificaciones Push FCM.
+/// 1) Perfil del piloto y foto (editable en cuentas Email, bloqueada en Google/GitHub).
+/// 2) Odómetro automático (OBD2 + GPS) con alertas funcionales de mantenimiento por kilometraje.
+/// 3) Notificaciones del sistema Android (sin banner interno duplicado).
 class PilotProfileScreen extends ConsumerWidget {
   const PilotProfileScreen({super.key});
+
+  void _showSyncOdometerDialog(
+    BuildContext context,
+    FcmTopicsNotifier fcmNotifier,
+    double currentKm,
+  ) {
+    var draftKm = currentKm.round().toString();
+    showDialog<void>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Sincronizar Odómetro del Clio'),
+        content: TextFormField(
+          initialValue: draftKm,
+          keyboardType: TextInputType.number,
+          onChanged: (v) => draftKm = v,
+          decoration: const InputDecoration(
+            labelText: 'Kilometraje actual del tablero (km)',
+            suffixText: 'km',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogCtx).pop(),
+            child: const Text('CANCELAR'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final parsed = double.tryParse(draftKm.trim());
+              if (parsed != null && parsed >= 0) {
+                fcmNotifier.updateVehicleOdometerKm(parsed);
+              }
+              Navigator.of(dialogCtx).pop();
+            },
+            child: const Text('GUARDAR'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -31,7 +71,7 @@ class PilotProfileScreen extends ConsumerWidget {
       padding: const EdgeInsets.all(16),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 880),
+          constraints: const BoxConstraints(maxWidth: 920),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -61,7 +101,8 @@ class PilotProfileScreen extends ConsumerWidget {
                             ),
                             child: ClipOval(
                               child: profile.localAvatarPath != null &&
-                                      File(profile.localAvatarPath!).existsSync()
+                                      File(profile.localAvatarPath!)
+                                          .existsSync()
                                   ? Image.file(
                                       File(profile.localAvatarPath!),
                                       fit: BoxFit.cover,
@@ -95,7 +136,8 @@ class PilotProfileScreen extends ConsumerWidget {
                                   ? Icons.camera_alt_rounded
                                   : Icons.lock_rounded,
                               size: 15,
-                              color: canEditAvatar ? Colors.black : Colors.white,
+                              color:
+                                  canEditAvatar ? Colors.black : Colors.white,
                             ),
                           ),
                         ],
@@ -167,7 +209,8 @@ class PilotProfileScreen extends ConsumerWidget {
                                 ),
                                 OutlinedButton.icon(
                                   onPressed: authNotifier.signOut,
-                                  icon: const Icon(Icons.logout_rounded, size: 17),
+                                  icon: const Icon(Icons.logout_rounded,
+                                      size: 17),
                                   label: const Text('CERRAR SESIÓN'),
                                 ),
                               ],
@@ -197,7 +240,128 @@ class PilotProfileScreen extends ConsumerWidget {
 
               const SizedBox(height: 14),
 
-              // 2. Notificaciones Push (FCM Topics)
+              // 2. Odómetro Automático + Alertas Funcionales por Kilometraje
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.speed_rounded, color: primary),
+                              const SizedBox(width: 8),
+                              Text(
+                                'ODÓMETRO AUTOMÁTICO Y MANTENIMIENTO',
+                                style: AppTheme.renaultSportHeaderStyle(
+                                  fontSize: 15,
+                                  color: primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => _showSyncOdometerDialog(
+                              context,
+                              fcmNotifier,
+                              fcmTopics.vehicleOdometerKm,
+                            ),
+                            icon: const Icon(Icons.edit_rounded, size: 16),
+                            label: const Text('AJUSTAR KM'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.black26,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: primary.withValues(alpha: 0.4),
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'KILOMETRAJE DETECTADO (GPS + OBD2)',
+                                  style: TextStyle(fontSize: 10.5),
+                                ),
+                                Text(
+                                  '${fcmTopics.vehicleOdometerKm.toStringAsFixed(1)} KM',
+                                  style: AppTheme.digitalDisplayStyle(
+                                    fontSize: 26,
+                                    color: RenaultSportPalette.oemShiftGreen,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: primary.withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                '+${fcmTopics.sessionDistanceKm.toStringAsFixed(2)} km hoy',
+                                style: AppTheme.telemetryNumericStyle(
+                                  fontSize: 12,
+                                  color: primary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 14),
+
+                      _ServiceMileageRow(
+                        title: 'Cambio de Aceite 5W40 Sintético',
+                        intervalKm: FcmTopicsState.kOilIntervalKm,
+                        remainingKm: fcmTopics.kmUntilOilService,
+                        onMarkDone: () =>
+                            fcmNotifier.markServiceCompleted('oil'),
+                      ),
+                      const SizedBox(height: 10),
+                      _ServiceMileageRow(
+                        title: 'Bujías NGK PFR6E-10 y Filtros',
+                        intervalKm: FcmTopicsState.kSparkPlugIntervalKm,
+                        remainingKm: fcmTopics.kmUntilSparkPlugs,
+                        onMarkDone: () =>
+                            fcmNotifier.markServiceCompleted('plugs'),
+                      ),
+                      const SizedBox(height: 10),
+                      _ServiceMileageRow(
+                        title: 'Kit de Distribución + Polea VVT F4R',
+                        intervalKm: FcmTopicsState.kTimingBeltIntervalKm,
+                        remainingKm: fcmTopics.kmUntilTimingBelt,
+                        onMarkDone: () =>
+                            fcmNotifier.markServiceCompleted('belt'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 14),
+
+              // 3. Notificaciones del Sistema (Solo notificación nativa Android, sin popup en app)
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(18),
@@ -211,33 +375,35 @@ class PilotProfileScreen extends ConsumerWidget {
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Text(
-                            'NOTIFICACIONES Y ALERTAS (FCM)',
+                            'NOTIFICACIONES DEL SISTEMA',
                             style: AppTheme.renaultSportHeaderStyle(
                               fontSize: 15,
                               color: primary,
                             ),
                           ),
                           OutlinedButton.icon(
-                            onPressed: () => fcmNotifier.triggerSimulatedHudPush(
-                              title: 'MANTENIMIENTO F4R',
+                            onPressed: () =>
+                                fcmNotifier.triggerSystemNotification(
+                              title:
+                                  'MANTENIMIENTO F4R (${fcmTopics.vehicleOdometerKm.round()} KM)',
                               body:
-                                  'Revisión recomendada: kit de distribución y polea decaladora VVT.',
+                                  'Aceite: ${fcmTopics.kmUntilOilService.round()} km restantes • Distribución: ${fcmTopics.kmUntilTimingBelt.round()} km.',
                               topic: 'clio_rs_maintenance',
                             ),
                             icon: const Icon(
                               Icons.notifications_active_rounded,
                               size: 16,
                             ),
-                            label: const Text('PROBAR ALERTA HUD'),
+                            label: const Text('PROBAR ALERTA'),
                           ),
                         ],
                       ),
                       const SizedBox(height: 6),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Mantenimiento F4R'),
+                        title: const Text('Alertas automáticas por kilometraje'),
                         subtitle: const Text(
-                          'Avisos de correa de distribución, VVT y servicio.',
+                          'Notifica automáticamente en Android al acercarse a cada servicio.',
                           style: TextStyle(fontSize: 12),
                         ),
                         value: fcmTopics.maintenanceSubscribed,
@@ -273,6 +439,90 @@ class PilotProfileScreen extends ConsumerWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ServiceMileageRow extends StatelessWidget {
+  final String title;
+  final double intervalKm;
+  final double remainingKm;
+  final VoidCallback onMarkDone;
+
+  const _ServiceMileageRow({
+    required this.title,
+    required this.intervalKm,
+    required this.remainingKm,
+    required this.onMarkDone,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final usedRatio =
+        ((intervalKm - remainingKm) / intervalKm).clamp(0.0, 1.0);
+    final isDue = remainingKm <= 0;
+    final isSoon = remainingKm > 0 && remainingKm <= 500;
+    final statusColor = isDue
+        ? RenaultSportPalette.revLimiterRed
+        : isSoon
+            ? RenaultSportPalette.coldEngineAmber
+            : RenaultSportPalette.oemShiftGreen;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.black12,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isDue || isSoon ? statusColor : Colors.white12,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                      ),
+                    ),
+                    Text(
+                      isDue
+                          ? 'VENCIDO por ${remainingKm.abs().round()} km'
+                          : 'Faltan ${remainingKm.round()} km (cada ${intervalKm.round()} km)',
+                      style: AppTheme.telemetryNumericStyle(
+                        fontSize: 11,
+                        color: statusColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton(
+                onPressed: onMarkDone,
+                child: const Text('REGISTRAR HECHO'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: usedRatio,
+              minHeight: 6,
+              color: statusColor,
+              backgroundColor: Colors.white12,
+            ),
+          ),
+        ],
       ),
     );
   }

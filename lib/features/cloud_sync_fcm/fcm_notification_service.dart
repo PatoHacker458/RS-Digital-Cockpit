@@ -4,8 +4,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Handler de Segundo Plano de Nivel Superior obligatorio para Android 17 (FCM Background):
-/// Se invoca en su propio Isolate cuando la app está en background o terminada.
+/// Handler de Segundo Plano de Nivel Superior para FCM Background.
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
@@ -13,83 +12,127 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   } catch (_) {}
 }
 
-/// Modelo inmutable de Notificación Push mostrada en el Banner Global HUD Automotriz
-class HudNotificationBannerMessage {
-  final String title;
-  final String body;
-  final String topic;
-  final DateTime receivedAt;
-
-  const HudNotificationBannerMessage({
-    required this.title,
-    required this.body,
-    required this.topic,
-    required this.receivedAt,
-  });
-}
-
-/// Estado reactivo de los canales/temas FCM (`subscribeToTopic` / `unsubscribeFromTopic`)
+/// Estado reactivo de Notificaciones del Sistema + Seguimiento Automático de Kilometraje (Odómetro)
 class FcmTopicsState {
-  final bool maintenanceSubscribed; // clio_rs_maintenance
+  final bool maintenanceSubscribed; // clio_rs_maintenance (Alertas por kilometraje)
   final bool trackDaysSubscribed;   // track_day_events
   final bool otaThemesSubscribed;   // ota_gauge_themes
-  final HudNotificationBannerMessage? activeHudBanner;
+
+  // Seguimiento automático de kilometraje del vehículo (OBD-II + GPS)
+  final double vehicleOdometerKm;
+  final double sessionDistanceKm;
+  final double lastOilServiceKm;
+  final double lastSparkPlugsKm;
+  final double lastTimingBeltKm;
 
   const FcmTopicsState({
     this.maintenanceSubscribed = true,
     this.trackDaysSubscribed = true,
     this.otaThemesSubscribed = false,
-    this.activeHudBanner,
+    this.vehicleOdometerKm = 148200.0,
+    this.sessionDistanceKm = 0.0,
+    this.lastOilServiceKm = 140000.0,
+    this.lastSparkPlugsKm = 125000.0,
+    this.lastTimingBeltKm = 100000.0,
   });
+
+  // Intervalos oficiales Renault Sport Clio 172 (F4R 736)
+  static const double kOilIntervalKm = 10000.0;
+  static const double kSparkPlugIntervalKm = 30000.0;
+  static const double kTimingBeltIntervalKm = 60000.0;
+
+  double get kmUntilOilService =>
+      (lastOilServiceKm + kOilIntervalKm) - vehicleOdometerKm;
+  double get kmUntilSparkPlugs =>
+      (lastSparkPlugsKm + kSparkPlugIntervalKm) - vehicleOdometerKm;
+  double get kmUntilTimingBelt =>
+      (lastTimingBeltKm + kTimingBeltIntervalKm) - vehicleOdometerKm;
 
   FcmTopicsState copyWith({
     bool? maintenanceSubscribed,
     bool? trackDaysSubscribed,
     bool? otaThemesSubscribed,
-    HudNotificationBannerMessage? activeHudBanner,
-    bool clearBanner = false,
+    double? vehicleOdometerKm,
+    double? sessionDistanceKm,
+    double? lastOilServiceKm,
+    double? lastSparkPlugsKm,
+    double? lastTimingBeltKm,
   }) {
     return FcmTopicsState(
-      maintenanceSubscribed: maintenanceSubscribed ?? this.maintenanceSubscribed,
+      maintenanceSubscribed:
+          maintenanceSubscribed ?? this.maintenanceSubscribed,
       trackDaysSubscribed: trackDaysSubscribed ?? this.trackDaysSubscribed,
       otaThemesSubscribed: otaThemesSubscribed ?? this.otaThemesSubscribed,
-      activeHudBanner: clearBanner ? null : (activeHudBanner ?? this.activeHudBanner),
+      vehicleOdometerKm: vehicleOdometerKm ?? this.vehicleOdometerKm,
+      sessionDistanceKm: sessionDistanceKm ?? this.sessionDistanceKm,
+      lastOilServiceKm: lastOilServiceKm ?? this.lastOilServiceKm,
+      lastSparkPlugsKm: lastSparkPlugsKm ?? this.lastSparkPlugsKm,
+      lastTimingBeltKm: lastTimingBeltKm ?? this.lastTimingBeltKm,
     );
   }
 }
 
-/// Notifier que gestiona el Ciclo de Vida Completo de Firebase Cloud Messaging (FCM):
-/// 1) Primer plano (`FirebaseMessaging.onMessage`)
-/// 2) Segundo plano (`FirebaseMessaging.onMessageOpenedApp`)
-/// 3) Estado terminado (`FirebaseMessaging.instance.getInitialMessage()`)
-/// 4) Canal de alta prioridad en Android 17 con `flutter_local_notifications`
-/// 5) Suscripción reactiva a Temas (`subscribeToTopic` / `unsubscribeFromTopic`)
+/// Notifier que gestiona:
+/// 1) Notificaciones nativas del sistema Android (sin banner interno duplicado).
+/// 2) Cálculo automático de kilometraje en vivo (integración OBD2 / GPS) y disparo
+///    automático de alertas de mantenimiento (Aceite, Bujías, Distribución + VVT).
 class FcmTopicsNotifier extends Notifier<FcmTopicsState> {
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
+  static const String _prefOdometerKey = 'rs_vehicle_odometer_km';
+  static const String _prefLastOilKey = 'rs_service_last_oil_km';
+  static const String _prefLastPlugsKey = 'rs_service_last_plugs_km';
+  static const String _prefLastBeltKey = 'rs_service_last_belt_km';
+  static const String _prefNotifiedPrefix = 'rs_maint_notified_';
+
+  DateTime _lastPersistedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  final Set<String> _notifiedAlertsThisSession = <String>{};
+
   static const AndroidNotificationChannel _androidHudChannel =
       AndroidNotificationChannel(
     'clio_rs_hud_channel',
-    'Clio RS 172 Cockpit HUD Alerts',
-    description: 'Alertas críticas de telemetría F4R, mantenimiento y Track Days',
+    'RS Digital Cockpit Alertas',
+    description: 'Alertas de mantenimiento por kilometraje y eventos RS',
     importance: Importance.max,
   );
 
   @override
   FcmTopicsState build() {
-    _initializeFcmAndLocalNotifications();
+    _initializeFcmAndOdometer();
     return const FcmTopicsState();
   }
 
-  Future<void> _initializeFcmAndLocalNotifications() async {
+  Future<void> _initializeFcmAndOdometer() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedOdo = prefs.getDouble(_prefOdometerKey);
+      final savedOil = prefs.getDouble(_prefLastOilKey);
+      final savedPlugs = prefs.getDouble(_prefLastPlugsKey);
+      final savedBelt = prefs.getDouble(_prefLastBeltKey);
+      final maintSub = prefs.getBool('fcm_topic_clio_rs_maintenance');
+      final trackSub = prefs.getBool('fcm_topic_track_day_events');
+      final otaSub = prefs.getBool('fcm_topic_ota_gauge_themes');
+
+      state = state.copyWith(
+        vehicleOdometerKm: savedOdo ?? state.vehicleOdometerKm,
+        lastOilServiceKm: savedOil ?? state.lastOilServiceKm,
+        lastSparkPlugsKm: savedPlugs ?? state.lastSparkPlugsKm,
+        lastTimingBeltKm: savedBelt ?? state.lastTimingBeltKm,
+        maintenanceSubscribed: maintSub ?? state.maintenanceSubscribed,
+        trackDaysSubscribed: trackSub ?? state.trackDaysSubscribed,
+        otaThemesSubscribed: otaSub ?? state.otaThemesSubscribed,
+      );
+    } catch (_) {}
+
     try {
       const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
       await _localNotifications.initialize(
         const InitializationSettings(android: androidInit),
       );
       await _localNotifications
-          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
           ?.createNotificationChannel(_androidHudChannel);
     } catch (_) {}
 
@@ -102,40 +145,151 @@ class FcmTopicsNotifier extends Notifier<FcmTopicsState> {
         provisional: false,
       );
 
-      // Suscripciones iniciales por defecto
-      await messaging.subscribeToTopic('clio_rs_maintenance');
-      await messaging.subscribeToTopic('track_day_events');
-
-      // 1. Estado Terminado (getInitialMessage)
-      final initialMessage = await messaging.getInitialMessage();
-      if (initialMessage != null) {
-        _handleIncomingRemoteMessage(initialMessage, origin: 'TERMINATED');
+      if (state.maintenanceSubscribed) {
+        await messaging.subscribeToTopic('clio_rs_maintenance');
+      }
+      if (state.trackDaysSubscribed) {
+        await messaging.subscribeToTopic('track_day_events');
       }
 
-      // 2. Primer Plano (onMessage)
-      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-        _handleIncomingRemoteMessage(message, origin: 'FOREGROUND');
-      });
+      final initialMessage = await messaging.getInitialMessage();
+      if (initialMessage != null) {
+        _handleIncomingRemoteMessage(initialMessage);
+      }
 
-      // 3. Segundo Plano al tocar la notificación (onMessageOpenedApp)
-      FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-        _handleIncomingRemoteMessage(message, origin: 'BACKGROUND_OPENED');
-      });
-    } catch (_) {
-      // Si se ejecuta en el aula sin credenciales Firebase activas, mantiene listos los switches
+      FirebaseMessaging.onMessage.listen(_handleIncomingRemoteMessage);
+      FirebaseMessaging.onMessageOpenedApp.listen(_handleIncomingRemoteMessage);
+    } catch (_) {}
+
+    // Verificar al iniciar si algún mantenimiento ya venció o está próximo por kilometraje
+    await _evaluateAutomaticMileageAlerts();
+  }
+
+  void _handleIncomingRemoteMessage(RemoteMessage message) {
+    final title = message.notification?.title ?? 'RS DIGITAL COCKPIT';
+    final body = message.notification?.body ??
+        (message.data['body'] as String? ?? 'Nueva alerta recibida.');
+    final topic = message.from ?? 'clio_rs_maintenance';
+    triggerSystemNotification(title: title, body: body, topic: topic);
+  }
+
+  /// Suma automáticamente los kilómetros recorridos (provenientes de GPS real o velocidad OBD2)
+  /// y evalúa las alertas automáticas de mantenimiento.
+  Future<void> addDrivenDistanceKm(double deltaKm) async {
+    if (deltaKm <= 0.0 || deltaKm > 5.0) return; // Descartar saltos GPS imposibles
+    final nextOdo = state.vehicleOdometerKm + deltaKm;
+    final nextSession = state.sessionDistanceKm + deltaKm;
+
+    state = state.copyWith(
+      vehicleOdometerKm: nextOdo,
+      sessionDistanceKm: nextSession,
+    );
+
+    final now = DateTime.now();
+    if (now.difference(_lastPersistedAt).inSeconds >= 10) {
+      _lastPersistedAt = now;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setDouble(_prefOdometerKey, nextOdo);
+      } catch (_) {}
+      await _evaluateAutomaticMileageAlerts();
     }
   }
 
-  void _handleIncomingRemoteMessage(RemoteMessage message, {required String origin}) {
-    final title = message.notification?.title ?? 'TELEMETRÍA RENAULT SPORT ($origin)';
-    final body = message.notification?.body ??
-        (message.data['body'] as String? ?? 'Mensaje recibido desde Firebase Cloud Messaging.');
-    final topic = message.from ?? 'clio_rs_maintenance';
-
-    triggerSimulatedHudPush(title: title, body: body, topic: topic);
+  /// Permite al usuario sincronizar su kilometraje actual del tablero físico del Clio
+  Future<void> updateVehicleOdometerKm(double exactKm) async {
+    if (exactKm < 0) return;
+    state = state.copyWith(vehicleOdometerKm: exactKm);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_prefOdometerKey, exactKm);
+    } catch (_) {}
+    await _evaluateAutomaticMileageAlerts();
   }
 
-  /// Suscribe o desuscribe reactivamente un tema en FCM (`subscribeToTopic` / `unsubscribeFromTopic`)
+  /// Marca un servicio como realizado hoy en el kilometraje actual (reinicia su contador)
+  Future<void> markServiceCompleted(String serviceType) async {
+    final currentKm = state.vehicleOdometerKm;
+    final prefs = await SharedPreferences.getInstance();
+    switch (serviceType) {
+      case 'oil':
+        state = state.copyWith(lastOilServiceKm: currentKm);
+        await prefs.setDouble(_prefLastOilKey, currentKm);
+        await prefs.remove('${_prefNotifiedPrefix}oil');
+        _notifiedAlertsThisSession.remove('oil');
+      case 'plugs':
+        state = state.copyWith(lastSparkPlugsKm: currentKm);
+        await prefs.setDouble(_prefLastPlugsKey, currentKm);
+        await prefs.remove('${_prefNotifiedPrefix}plugs');
+        _notifiedAlertsThisSession.remove('plugs');
+      case 'belt':
+        state = state.copyWith(lastTimingBeltKm: currentKm);
+        await prefs.setDouble(_prefLastBeltKey, currentKm);
+        await prefs.remove('${_prefNotifiedPrefix}belt');
+        _notifiedAlertsThisSession.remove('belt');
+    }
+  }
+
+  /// Evalúa automáticamente si el kilometraje actual alcanzó algún umbral de servicio
+  /// (vencido <= 0 km o próximo <= 500 km) y dispara la notificación nativa del sistema Android.
+  Future<void> _evaluateAutomaticMileageAlerts() async {
+    if (!state.maintenanceSubscribed) return;
+
+    final checks = <({String id, String name, double remaining})>[
+      (
+        id: 'oil',
+        name: 'Cambio de Aceite 5W40 Sintético',
+        remaining: state.kmUntilOilService,
+      ),
+      (
+        id: 'plugs',
+        name: 'Bujías NGK PFR6E-10 y Filtros',
+        remaining: state.kmUntilSparkPlugs,
+      ),
+      (
+        id: 'belt',
+        name: 'Kit de Distribución y Polea VVT F4R',
+        remaining: state.kmUntilTimingBelt,
+      ),
+    ];
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      for (final check in checks) {
+        if (check.remaining <= 500.0) {
+          final bucket = check.remaining <= 0 ? 'due' : 'soon';
+          final alertKey = '${check.id}_$bucket';
+          if (_notifiedAlertsThisSession.contains(alertKey)) continue;
+          final alreadySentKm = prefs.getDouble('$_prefNotifiedPrefix$alertKey');
+          // Evitar repetir la misma alerta hasta que recorra otros 250 km
+          if (alreadySentKm != null &&
+              (state.vehicleOdometerKm - alreadySentKm).abs() < 250.0) {
+            continue;
+          }
+
+          _notifiedAlertsThisSession.add(alertKey);
+          await prefs.setDouble(
+            '$_prefNotifiedPrefix$alertKey',
+            state.vehicleOdometerKm,
+          );
+
+          final body = check.remaining <= 0
+              ? 'Kilometraje actual: ${state.vehicleOdometerKm.round()} km. ${check.name} vencido por ${check.remaining.abs().round()} km.'
+              : 'Kilometraje actual: ${state.vehicleOdometerKm.round()} km. Faltan ${check.remaining.round()} km para ${check.name}.';
+
+          await triggerSystemNotification(
+            title: check.remaining <= 0
+                ? 'SERVICIO REQUERIDO (${state.vehicleOdometerKm.round()} KM)'
+                : 'PRÓXIMO MANTENIMIENTO F4R',
+            body: body,
+            topic: 'clio_rs_maintenance',
+          );
+        }
+      }
+    } catch (_) {}
+  }
+
+  /// Suscribe o desuscribe un canal FCM y envía notificación del sistema
   Future<void> toggleTopic(String topicName, bool subscribe) async {
     switch (topicName) {
       case 'clio_rs_maintenance':
@@ -155,31 +309,14 @@ class FcmTopicsNotifier extends Notifier<FcmTopicsState> {
         await FirebaseMessaging.instance.unsubscribeFromTopic(topicName);
       }
     } catch (_) {}
-
-    triggerSimulatedHudPush(
-      title: subscribe ? 'SUSCRITO A CANAL FCM' : 'BAJA DE CANAL FCM',
-      body: subscribe
-          ? 'FirebaseMessaging.subscribeToTopic("$topicName") ejecutado en Android 17.'
-          : 'FirebaseMessaging.unsubscribeFromTopic("$topicName") ejecutado.',
-      topic: topicName,
-    );
   }
 
-  /// Lanza un banner estilo HUD automotriz en el Listener Global y notificación local de Android 17
-  Future<void> triggerSimulatedHudPush({
+  /// Dispara ÚNICAMENTE la notificación nativa del sistema Android (sin banner interno en la app).
+  Future<void> triggerSystemNotification({
     required String title,
     required String body,
     required String topic,
   }) async {
-    state = state.copyWith(
-      activeHudBanner: HudNotificationBannerMessage(
-        title: title,
-        body: body,
-        topic: topic,
-        receivedAt: DateTime.now(),
-      ),
-    );
-
     try {
       await _localNotifications.show(
         DateTime.now().millisecondsSinceEpoch ~/ 1000,
@@ -198,12 +335,16 @@ class FcmTopicsNotifier extends Notifier<FcmTopicsState> {
     } catch (_) {}
   }
 
-  void dismissHudBanner() {
-    state = state.copyWith(clearBanner: true);
+  /// Alias retrocompatible para llamadas existentes -> dispara únicamente notificación del sistema
+  Future<void> triggerSimulatedHudPush({
+    required String title,
+    required String body,
+    required String topic,
+  }) {
+    return triggerSystemNotification(title: title, body: body, topic: topic);
   }
 }
 
 final fcmTopicsProvider = NotifierProvider<FcmTopicsNotifier, FcmTopicsState>(
   FcmTopicsNotifier.new,
 );
-

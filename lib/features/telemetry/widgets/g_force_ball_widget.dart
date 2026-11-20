@@ -27,28 +27,66 @@ class GForceBallWidget extends ConsumerWidget {
                     'G-FORCE MONITOR',
                     overflow: TextOverflow.ellipsis,
                     style: AppTheme.renaultSportHeaderStyle(
-                      fontSize: 13,
+                      fontSize: 12.5,
                       color: primaryAccent,
                     ),
                   ),
                 ),
-                InkWell(
-                  onTap: () => ref.read(gForceSensorProvider.notifier).resetPeakG(),
-                  borderRadius: BorderRadius.circular(6),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: primaryAccent.withValues(alpha: 0.14),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    InkWell(
+                      onTap: () => ref
+                          .read(gForceSensorProvider.notifier)
+                          .calibrateZeroAtCurrentReading(),
                       borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      'PEAK ${gState.peakG.toStringAsFixed(2)}G ↺',
-                      style: AppTheme.telemetryNumericStyle(
-                        fontSize: 10.5,
-                        color: primaryAccent,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: RenaultSportPalette.oemShiftGreen
+                              .withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: RenaultSportPalette.oemShiftGreen
+                                .withValues(alpha: 0.7),
+                          ),
+                        ),
+                        child: Text(
+                          'CALIBRAR',
+                          style: AppTheme.telemetryNumericStyle(
+                            fontSize: 9.5,
+                            color: RenaultSportPalette.oemShiftGreen,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 5),
+                    InkWell(
+                      onTap: () =>
+                          ref.read(gForceSensorProvider.notifier).resetPeakG(),
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: primaryAccent.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '${gState.peakG.toStringAsFixed(2)}G ↺',
+                          style: AppTheme.telemetryNumericStyle(
+                            fontSize: 9.5,
+                            color: primaryAccent,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),

@@ -10,7 +10,6 @@ import '../cloud_sync_fcm/blackbox_realtime_service.dart';
 import '../digital_garage_payments/screens/digital_garage_screen.dart';
 import '../map_track/track_map_screen.dart';
 import '../multimedia/multimedia_hub_screen.dart';
-import '../sensors/biometric_immobilizer_service.dart';
 import '../telemetry/models/obd_telemetry_frame.dart';
 import '../telemetry/providers/telemetry_providers.dart';
 import '../telemetry/widgets/g_force_ball_widget.dart';
@@ -44,7 +43,7 @@ class CockpitDashboardScreen extends ConsumerWidget {
               ),
               child: Column(
                 children: [
-                  // 1. Barra Superior Compacta
+                  // 1. Barra Superior Compacta (sin inmovilizador)
                   _CockpitTopHeaderBar(frame: frame),
                   const SizedBox(height: 8),
 
@@ -57,7 +56,7 @@ class CockpitDashboardScreen extends ConsumerWidget {
                       CockpitSectionTab.multimediaHub =>
                         const MultimediaHubScreen(),
                       CockpitSectionTab.trackMapGps => const TrackMapScreen(
-                          isCompactPreview: false,
+                          isMiniLiveMap: false,
                         ),
                       CockpitSectionTab.digitalGarage =>
                         const DigitalGarageScreen(),
@@ -69,7 +68,7 @@ class CockpitDashboardScreen extends ConsumerWidget {
                   ),
                   const SizedBox(height: 8),
 
-                  // 3. Dock Inferior Unificado (COCKPIT, TRACK, GARAGE, ACCOUNT, ECU + Logos Apps)
+                  // 3. Dock Inferior Centrado (COCKPIT, MULTIMEDIA, TRACK, GARAGE, ACCOUNT, ECU)
                   const LauncherDockWidget(),
                 ],
               ),
@@ -91,10 +90,31 @@ class _CockpitTopHeaderBar extends ConsumerWidget {
     final adapterState = ref.watch(obdConnectionModeProvider);
     final obdNotifier = ref.read(obdConnectionModeProvider.notifier);
     final themeMode = ref.watch(themeModeProvider);
-    final immobilizer = ref.watch(biometricImmobilizerProvider);
     final profile = ref.watch(pilotAuthProvider);
     final primary = Theme.of(context).colorScheme.primary;
     final isSimulator = adapterState.mode == ObdConnectionMode.trackSimulator;
+
+    final Color obdBadgeColor;
+    final String obdBadgeLabel;
+    final IconData obdBadgeIcon;
+
+    if (!adapterState.ecuEnabled) {
+      obdBadgeColor = Colors.grey;
+      obdBadgeLabel = 'ECU OFF';
+      obdBadgeIcon = Icons.bluetooth_disabled_rounded;
+    } else if (isSimulator) {
+      obdBadgeColor = RenaultSportPalette.oemShiftGreen;
+      obdBadgeLabel = 'SIMULADOR';
+      obdBadgeIcon = Icons.sports_motorsports_rounded;
+    } else if (adapterState.isConnected) {
+      obdBadgeColor = RenaultSportPalette.oemShiftGreen;
+      obdBadgeLabel = adapterState.selectedDeviceName ?? 'OBD2 OK';
+      obdBadgeIcon = Icons.bluetooth_connected_rounded;
+    } else {
+      obdBadgeColor = RenaultSportPalette.siriusLiquidYellow;
+      obdBadgeLabel = 'CONECTAR OBD2';
+      obdBadgeIcon = Icons.bluetooth_searching_rounded;
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -108,7 +128,6 @@ class _CockpitTopHeaderBar extends ConsumerWidget {
       ),
       child: Row(
         children: [
-          // Marca RS Digital Cockpit
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
@@ -136,13 +155,12 @@ class _CockpitTopHeaderBar extends ConsumerWidget {
             ),
           ),
 
-          // Controles rápidos alineados a la derecha
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Botón de Estado OBD2 (Lleva a la pestaña ECU para elegir adaptador)
+                // Botón de Estado OBD2 / ECU ON-OFF
                 InkWell(
                   onTap: () => ref
                       .read(cockpitTabProvider.notifier)
@@ -154,43 +172,20 @@ class _CockpitTopHeaderBar extends ConsumerWidget {
                       vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: (adapterState.isConnected
-                              ? RenaultSportPalette.oemShiftGreen
-                              : RenaultSportPalette.siriusLiquidYellow)
-                          .withValues(alpha: 0.15),
+                      color: obdBadgeColor.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: adapterState.isConnected
-                            ? RenaultSportPalette.oemShiftGreen
-                            : RenaultSportPalette.siriusLiquidYellow,
-                      ),
+                      border: Border.all(color: obdBadgeColor),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          isSimulator
-                              ? Icons.sports_motorsports_rounded
-                              : (adapterState.isConnected
-                                  ? Icons.bluetooth_connected_rounded
-                                  : Icons.bluetooth_searching_rounded),
-                          size: 15,
-                          color: adapterState.isConnected
-                              ? RenaultSportPalette.oemShiftGreen
-                              : RenaultSportPalette.siriusLiquidYellow,
-                        ),
+                        Icon(obdBadgeIcon, size: 15, color: obdBadgeColor),
                         const SizedBox(width: 6),
                         Text(
-                          isSimulator
-                              ? 'SIMULADOR'
-                              : (adapterState.isConnected
-                                  ? (adapterState.selectedDeviceName ?? 'OBD2 OK')
-                                  : 'CONECTAR OBD2'),
+                          obdBadgeLabel,
                           style: AppTheme.telemetryNumericStyle(
                             fontSize: 11,
-                            color: adapterState.isConnected
-                                ? RenaultSportPalette.oemShiftGreen
-                                : RenaultSportPalette.siriusLiquidYellow,
+                            color: obdBadgeColor,
                           ),
                         ),
                       ],
@@ -198,7 +193,7 @@ class _CockpitTopHeaderBar extends ConsumerWidget {
                   ),
                 ),
 
-                if (isSimulator) ...[
+                if (isSimulator && adapterState.ecuEnabled) ...[
                   const SizedBox(width: 8),
                   InkWell(
                     onTap: obdNotifier.toggleSimulatorEngineWarmth,
@@ -234,29 +229,6 @@ class _CockpitTopHeaderBar extends ConsumerWidget {
                 ],
 
                 const SizedBox(width: 6),
-
-                // Biometría
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'Inmovilizador Biométrico',
-                  onPressed: () {
-                    final bio = ref.read(biometricImmobilizerProvider.notifier);
-                    if (immobilizer.isImmobilizerUnlocked) {
-                      bio.lockImmobilizer();
-                    } else {
-                      bio.authenticateDriver();
-                    }
-                  },
-                  icon: Icon(
-                    immobilizer.isImmobilizerUnlocked
-                        ? Icons.fingerprint_rounded
-                        : Icons.lock_outline_rounded,
-                    size: 20,
-                    color: immobilizer.isImmobilizerUnlocked
-                        ? RenaultSportPalette.oemShiftGreen
-                        : RenaultSportPalette.revLimiterRed,
-                  ),
-                ),
 
                 // Tema Oscuro / Claro
                 IconButton(
@@ -324,7 +296,7 @@ class _TabletThreeColumnCockpitView extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Columna Izquierda: Sensores K-Line + Blackbox Cloud
+        // Columna Izquierda: Sensores K-Line + Blackbox Cloud con visor de sesiones
         Expanded(
           flex: 3,
           child: _Sirius34TelemetryColumn(frame: frame),
@@ -343,7 +315,7 @@ class _TabletThreeColumnCockpitView extends StatelessWidget {
         ),
         const SizedBox(width: 10),
 
-        // Columna Derecha: G-Force + Mini Mapa GPS
+        // Columna Derecha: G-Force (con Calibrar) + Mini Google Maps en Tiempo Real
         const Expanded(
           flex: 3,
           child: Column(
@@ -355,7 +327,7 @@ class _TabletThreeColumnCockpitView extends StatelessWidget {
               SizedBox(height: 8),
               Expanded(
                 flex: 5,
-                child: TrackMapScreen(isCompactPreview: true),
+                child: TrackMapScreen(isMiniLiveMap: true),
               ),
             ],
           ),
@@ -393,8 +365,8 @@ class _CompactScrollableCockpitView extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           const SizedBox(
-            height: 240,
-            child: TrackMapScreen(isCompactPreview: true),
+            height: 220,
+            child: TrackMapScreen(isMiniLiveMap: true),
           ),
         ],
       ),
@@ -410,6 +382,18 @@ class _Sirius34TelemetryColumn extends ConsumerWidget {
     required this.frame,
     this.isScrollableMode = false,
   });
+
+  void _openBlackboxHistorySheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => const _BlackboxSessionsModalSheet(),
+    );
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -500,11 +484,30 @@ class _Sirius34TelemetryColumn extends ConsumerWidget {
                     ),
                   ),
                 ),
-                Text(
-                  '${blackboxRecords.length} GUARDADAS',
-                  style: AppTheme.telemetryNumericStyle(
-                    fontSize: 10,
-                    color: RenaultSportPalette.oemShiftGreen,
+                InkWell(
+                  onTap: () => _openBlackboxHistorySheet(context),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: RenaultSportPalette.oemShiftGreen
+                          .withValues(alpha: 0.16),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: RenaultSportPalette.oemShiftGreen
+                            .withValues(alpha: 0.6),
+                      ),
+                    ),
+                    child: Text(
+                      'VER (${blackboxRecords.length})',
+                      style: AppTheme.telemetryNumericStyle(
+                        fontSize: 10,
+                        color: RenaultSportPalette.oemShiftGreen,
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -527,27 +530,52 @@ class _Sirius34TelemetryColumn extends ConsumerWidget {
                   const SizedBox(width: 18),
                   _PeakStatColumn(
                     label: '0-100 KM/H',
-                    value: '${sessionStats.bestZeroToHundredSec ?? 6.8}s',
+                    value: sessionStats.bestZeroToHundredSec != null
+                        ? '${sessionStats.bestZeroToHundredSec}s'
+                        : '--',
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 8),
-            SizedBox(
-              height: 36,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 36,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                      onPressed: () => ref
+                          .read(blackboxRealtimeProvider.notifier)
+                          .syncCurrentSessionToCloud(),
+                      icon: const Icon(Icons.cloud_upload_rounded, size: 15),
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('GUARDAR'),
+                      ),
+                    ),
+                  ),
                 ),
-                onPressed: () => ref
-                    .read(blackboxRealtimeProvider.notifier)
-                    .syncCurrentSessionToCloud(),
-                icon: const Icon(Icons.cloud_upload_rounded, size: 16),
-                label: const FittedBox(
-                  fit: BoxFit.scaleDown,
-                  child: Text('GUARDAR SESIÓN'),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: SizedBox(
+                    height: 36,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                      onPressed: () => _openBlackboxHistorySheet(context),
+                      icon: const Icon(Icons.history_rounded, size: 15),
+                      label: const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('HISTORIAL'),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ],
         ),
@@ -572,6 +600,195 @@ class _Sirius34TelemetryColumn extends ConsumerWidget {
           blackboxCard,
         ],
       ),
+    );
+  }
+}
+
+/// Visor modal de sesiones guardadas en Blackbox Cloud (Firebase + Local)
+class _BlackboxSessionsModalSheet extends ConsumerWidget {
+  const _BlackboxSessionsModalSheet();
+
+  String _formatDate(DateTime dt) {
+    final d = dt.day.toString().padLeft(2, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final h = dt.hour.toString().padLeft(2, '0');
+    final min = dt.minute.toString().padLeft(2, '0');
+    return '$d/$m/${dt.year} • $h:$min';
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final sessions = ref.watch(blackboxRealtimeProvider);
+    final notifier = ref.read(blackboxRealtimeProvider.notifier);
+    final primary = Theme.of(context).colorScheme.primary;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.65,
+      minChildSize: 0.4,
+      maxChildSize: 0.9,
+      expand: false,
+      builder: (context, scrollController) {
+        return Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.cloud_done_rounded,
+                        color: RenaultSportPalette.siriusLiquidYellow,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'HISTORIAL BLACKBOX CLOUD (${sessions.length})',
+                        style: AppTheme.renaultSportHeaderStyle(
+                          fontSize: 16,
+                          color: primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Sincronizar desde Firebase',
+                        onPressed: notifier.refreshFromCloud,
+                        icon: const Icon(Icons.refresh_rounded),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const Text(
+                'Cada sesión guarda los valores máximos registrados en tu recorrido (RPM pico, velocidad máxima, temperatura máxima y códigos DTC).',
+                style: TextStyle(fontSize: 12),
+              ),
+              const Divider(height: 18),
+              Expanded(
+                child: sessions.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'Todavía no has guardado sesiones en Blackbox Cloud.\nPresiona "GUARDAR" en Cockpit al finalizar tu recorrido.',
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    : ListView.separated(
+                        controller: scrollController,
+                        itemCount: sessions.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, idx) {
+                          final rec = sessions[idx];
+                          return Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          _formatDate(rec.syncedAt),
+                                          style: AppTheme.renaultSportHeaderStyle(
+                                            fontSize: 13.5,
+                                            color: primary,
+                                          ),
+                                        ),
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 7,
+                                          vertical: 2,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: (rec.syncedToFirebase
+                                                  ? RenaultSportPalette
+                                                      .oemShiftGreen
+                                                  : RenaultSportPalette
+                                                      .coldEngineAmber)
+                                              .withValues(alpha: 0.16),
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          rec.syncedToFirebase
+                                              ? 'FIREBASE OK'
+                                              : 'LOCAL',
+                                          style: AppTheme.telemetryNumericStyle(
+                                            fontSize: 9.5,
+                                            color: rec.syncedToFirebase
+                                                ? RenaultSportPalette
+                                                    .oemShiftGreen
+                                                : RenaultSportPalette
+                                                    .coldEngineAmber,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      IconButton(
+                                        visualDensity: VisualDensity.compact,
+                                        tooltip: 'Eliminar sesión',
+                                        onPressed: () => notifier
+                                            .deleteSession(rec.sessionId),
+                                        icon: const Icon(
+                                          Icons.delete_outline_rounded,
+                                          size: 18,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Wrap(
+                                    spacing: 16,
+                                    runSpacing: 8,
+                                    children: [
+                                      _PeakStatColumn(
+                                        label: 'PEAK RPM',
+                                        value: '${rec.peakRpm.round()}',
+                                      ),
+                                      _PeakStatColumn(
+                                        label: 'MAX VEL',
+                                        value: '${rec.maxSpeedKmh} km/h',
+                                      ),
+                                      _PeakStatColumn(
+                                        label: 'TEMP MÁX',
+                                        value:
+                                            '${rec.maxCoolantTempC.toStringAsFixed(0)} °C',
+                                      ),
+                                      _PeakStatColumn(
+                                        label: '0-100 KM/H',
+                                        value: rec.zeroToHundredSec != null
+                                            ? '${rec.zeroToHundredSec}s'
+                                            : '--',
+                                      ),
+                                      _PeakStatColumn(
+                                        label: 'FALLAS DTC',
+                                        value: '${rec.dtcCount}',
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

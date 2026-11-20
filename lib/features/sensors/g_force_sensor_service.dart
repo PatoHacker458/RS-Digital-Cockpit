@@ -2,18 +2,19 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:sensors_plus/sensors_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../telemetry/providers/telemetry_providers.dart';
 
 /// Vector de Fuerzas G (Lateral X, Longitudinal Y, Magnitud Resultante y Picos)
-/// Calculado en tiempo real desde el Acelerómetro y Giroscopio nativos (`sensors_plus`)
-/// con filtro de paso bajo de primer orden para amortiguar vibraciones del soporte.
+/// con calibración de punto cero en el ángulo actual del soporte en el auto.
 class GForceTelemetryState {
-  final double lateralG;       // + Derecha / - Izquierda [-1.8G a +1.8G]
-  final double longitudinalG;  // + Aceleración / - Frenada [-1.8G a +1.8G]
-  final double yawRateDegSec;  // Velocidad angular del giroscopio (rad/s -> deg/s)
-  final double peakG;          // Pico máximo registrado en la sesión
-  final List< ({double x, double y}) > trailPoints; // Estela vectorial para GForceBallWidget
+  final double lateralG;
+  final double longitudinalG;
+  final double yawRateDegSec;
+  final double peakG;
+  final List<({double x, double y})> trailPoints;
   final bool usingHardwareSensor;
+  final bool isCalibrated;
 
   const GForceTelemetryState({
     this.lateralG = 0.0,
@@ -22,6 +23,7 @@ class GForceTelemetryState {
     this.peakG = 0.0,
     this.trailPoints = const [],
     this.usingHardwareSensor = true,
+    this.isCalibrated = false,
   });
 
   double get resultantG =>
@@ -34,6 +36,7 @@ class GForceTelemetryState {
     double? peakG,
     List<({double x, double y})>? trailPoints,
     bool? usingHardwareSensor,
+    bool? isCalibrated,
   }) {
     return GForceTelemetryState(
       lateralG: lateralG ?? this.lateralG,
@@ -42,29 +45,34 @@ class GForceTelemetryState {
       peakG: peakG ?? this.peakG,
       trailPoints: trailPoints ?? this.trailPoints,
       usingHardwareSensor: usingHardwareSensor ?? this.usingHardwareSensor,
+      isCalibrated: isCalibrated ?? this.isCalibrated,
     );
   }
 }
 
-/// Notifier de Sensores Inerciales IMU (Acelerómetro + Giroscopio) en Riverpod.
-/// Cumplimiento estricto: Gestión 100% reactiva en Riverpod.
+/// Notifier de Sensores Inerciales IMU (Acelerómetro + Giroscopio) con Calibración de Cero.
 class GForceSensorNotifier extends Notifier<GForceTelemetryState> {
   static const double _gravityMs2 = 9.80665;
-  // Coeficiente alpha = 0.18 del filtro de paso bajo exponencial (EMA)
-  // Elimina el ruido de alta frecuencia del chasis rígido Cup y soporte de tablero.
-  static const double _lowPassAlpha = 0.18;
+  static const double _lowPassAlpha = 0.20;
+  static const String _prefLatZeroKey = 'rs_gforce_zero_lat';
+  static const String _prefLonZeroKey = 'rs_gforce_zero_lon';
 
   StreamSubscription<AccelerometerEvent>? _accelSub;
   StreamSubscription<GyroscopeEvent>? _gyroSub;
   Timer? _simFallbackTimer;
 
+  double _lastRawLatG = 0.0;
+  double _lastRawLonG = 0.0;
+  double _zeroOffsetLatG = 0.0;
+  double _zeroOffsetLonG = 0.0;
   double _filteredLatG = 0.0;
   double _filteredLonG = 0.0;
   double _lastYawDegSec = 0.0;
-  DateTime _lastHardwareMovement = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _hasHardwareEvents = false;
 
   @override
   GForceTelemetryState build() {
+    _loadSavedCalibration();
     _initHardwareImuStreams();
     ref.onDispose(() {
       _accelSub?.cancel();
@@ -74,28 +82,45 @@ class GForceSensorNotifier extends Notifier<GForceTelemetryState> {
     return const GForceTelemetryState();
   }
 
+  Future<void> _loadSavedCalibration() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedLat = prefs.getDouble(_prefLatZeroKey);
+      final savedLon = prefs.getDouble(_prefLonZeroKey);
+      if (savedLat != null && savedLon != null) {
+        _zeroOffsetLatG = savedLat;
+        _zeroOffsetLonG = savedLon;
+        state = state.copyWith(isCalibrated: true);
+      }
+    } catch (_) {}
+  }
+
   void _initHardwareImuStreams() {
     try {
       _accelSub = accelerometerEventStream(
         samplingPeriod: SensorInterval.gameInterval,
       ).listen(
         (AccelerometerEvent event) {
-          // En orientación apaisada en la Pixel Tablet:
-          // Eje X corresponde a fuerza lateral y Eje Z/Y a aceleración longitudinal
-          final rawLatG = (event.x / _gravityMs2).clamp(-1.8, 1.8);
-          final rawLonG = ((event.z - 4.9) / _gravityMs2).clamp(-1.8, 1.8);
+          _hasHardwareEvents = true;
+          _lastRawLatG = event.x / _gravityMs2;
+          _lastRawLonG = event.z / _gravityMs2;
 
-          _filteredLatG = _filteredLatG + _lowPassAlpha * (rawLatG - _filteredLatG);
-          _filteredLonG = _filteredLonG + _lowPassAlpha * (rawLonG - _filteredLonG);
+          final calibratedLat = (_lastRawLatG - _zeroOffsetLatG).clamp(-1.8, 1.8);
+          final calibratedLon = (_lastRawLonG - _zeroOffsetLonG).clamp(-1.8, 1.8);
 
-          if (rawLatG.abs() > 0.08 || rawLonG.abs() > 0.08) {
-            _lastHardwareMovement = DateTime.now();
-            _publishVectorState(
-              latG: _filteredLatG,
-              lonG: _filteredLonG,
-              hardwareActive: true,
-            );
-          }
+          _filteredLatG =
+              _filteredLatG + _lowPassAlpha * (calibratedLat - _filteredLatG);
+          _filteredLonG =
+              _filteredLonG + _lowPassAlpha * (calibratedLon - _filteredLonG);
+
+          final deadzoneLat = _filteredLatG.abs() < 0.02 ? 0.0 : _filteredLatG;
+          final deadzoneLon = _filteredLonG.abs() < 0.02 ? 0.0 : _filteredLonG;
+
+          _publishVectorState(
+            latG: deadzoneLat,
+            lonG: deadzoneLon,
+            hardwareActive: true,
+          );
         },
         onError: (_) {},
       );
@@ -108,26 +133,26 @@ class GForceSensorNotifier extends Notifier<GForceTelemetryState> {
         },
         onError: (_) {},
       );
-    } catch (_) {
-      // Si se ejecuta en un entorno sin IMU física, el lazo cinemático mantiene vivo el medidor
-    }
+    } catch (_) {}
 
-    // Lazo cinemático complementario: si la Pixel Tablet está inmóvil sobre el escritorio
-    // del profesor en clase, sintetiza fuerzas G coherentes con la telemetría de pista
-    // para que el GForceBallWidget se vea en acción continua. Al mover la tablet,
-    // el acelerómetro físico toma prioridad inmediata.
-    _simFallbackTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
-      final sinceHwMs = DateTime.now().difference(_lastHardwareMovement).inMilliseconds;
-      if (sinceHwMs < 1500) return;
+    // Solo sintetiza fuerzas G cuando el usuario activa el Modo Simulador (o en emulador sin acelerómetro)
+    _simFallbackTimer = Timer.periodic(const Duration(milliseconds: 60), (_) {
+      final adapterState = ref.read(obdConnectionModeProvider);
+      if (adapterState.mode != ObdConnectionMode.trackSimulator &&
+          _hasHardwareEvents) {
+        return;
+      }
 
       final obdAsync = ref.read(obdTelemetryStreamProvider);
       final frame = obdAsync.valueOrNull;
-      if (frame == null) return;
+      if (frame == null || !frame.isSimulator) return;
 
       final t = DateTime.now().millisecondsSinceEpoch / 1000.0;
       final speedFactor = (frame.speedKmh / 180.0).clamp(0.15, 1.25);
-      final simLatG = (math.sin(t * 0.95) * 1.12 * speedFactor).clamp(-1.45, 1.45);
-      final simLonG = ((frame.throttleTps - 35.0) / 100.0 * 0.85).clamp(-1.25, 0.95);
+      final simLatG =
+          (math.sin(t * 0.95) * 1.12 * speedFactor).clamp(-1.45, 1.45);
+      final simLonG =
+          ((frame.throttleTps - 35.0) / 100.0 * 0.85).clamp(-1.25, 0.95);
 
       _publishVectorState(
         latG: simLatG,
@@ -135,6 +160,28 @@ class GForceSensorNotifier extends Notifier<GForceTelemetryState> {
         hardwareActive: false,
       );
     });
+  }
+
+  /// Establece el punto cero (0.00 G, 0.00 G) en la lectura actual del acelerómetro
+  Future<void> calibrateZeroAtCurrentReading() async {
+    _zeroOffsetLatG = _lastRawLatG;
+    _zeroOffsetLonG = _lastRawLonG;
+    _filteredLatG = 0.0;
+    _filteredLonG = 0.0;
+
+    state = state.copyWith(
+      lateralG: 0.0,
+      longitudinalG: 0.0,
+      peakG: 0.0,
+      trailPoints: const [],
+      isCalibrated: true,
+    );
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(_prefLatZeroKey, _zeroOffsetLatG);
+      await prefs.setDouble(_prefLonZeroKey, _zeroOffsetLonG);
+    } catch (_) {}
   }
 
   void _publishVectorState({

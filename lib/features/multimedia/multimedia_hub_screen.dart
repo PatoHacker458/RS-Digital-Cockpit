@@ -1,8 +1,12 @@
 import 'dart:async';
+import 'dart:ui' as ui;
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_theme.dart';
+
+enum MediaRepeatMode { off, all, one }
 
 class MultimediaHubState {
   final bool hasMediaPermission;
@@ -16,8 +20,11 @@ class MultimediaHubState {
   final String sourcePackage;
   final String sourceAppName;
   final Uint8List? albumArtBytes;
+  final String? albumArtUri;
+  final bool shuffleEnabled;
+  final MediaRepeatMode repeatMode;
 
-  // Estado de Volumen y Atenuación (ATT -75%)
+  // Volumen físico y Atenuación (ATT -75%)
   final double volumePercent;
   final int currentStep;
   final int maxStep;
@@ -37,6 +44,9 @@ class MultimediaHubState {
     this.sourcePackage = 'com.spotify.music',
     this.sourceAppName = 'Reproductor del Sistema',
     this.albumArtBytes,
+    this.albumArtUri,
+    this.shuffleEnabled = false,
+    this.repeatMode = MediaRepeatMode.off,
     this.volumePercent = 0.65,
     this.currentStep = 10,
     this.maxStep = 15,
@@ -49,6 +59,12 @@ class MultimediaHubState {
     if (durationMs <= 0) return 0.0;
     return (positionMs / durationMs).clamp(0.0, 1.0);
   }
+
+  bool get hasArtwork =>
+      albumArtBytes != null ||
+      (albumArtUri != null &&
+          (albumArtUri!.startsWith('http://') ||
+              albumArtUri!.startsWith('https://')));
 
   MultimediaHubState copyWith({
     bool? hasMediaPermission,
@@ -63,6 +79,10 @@ class MultimediaHubState {
     String? sourceAppName,
     Uint8List? albumArtBytes,
     bool clearAlbumArt = false,
+    String? albumArtUri,
+    bool clearAlbumArtUri = false,
+    bool? shuffleEnabled,
+    MediaRepeatMode? repeatMode,
     double? volumePercent,
     int? currentStep,
     int? maxStep,
@@ -83,6 +103,9 @@ class MultimediaHubState {
       sourceAppName: sourceAppName ?? this.sourceAppName,
       albumArtBytes:
           clearAlbumArt ? null : (albumArtBytes ?? this.albumArtBytes),
+      albumArtUri: clearAlbumArtUri ? null : (albumArtUri ?? this.albumArtUri),
+      shuffleEnabled: shuffleEnabled ?? this.shuffleEnabled,
+      repeatMode: repeatMode ?? this.repeatMode,
       volumePercent: volumePercent ?? this.volumePercent,
       currentStep: currentStep ?? this.currentStep,
       maxStep: maxStep ?? this.maxStep,
@@ -106,7 +129,7 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
     });
     _pollSystemMediaSession();
     _sessionPollTimer = Timer.periodic(
-      const Duration(milliseconds: 800),
+      const Duration(milliseconds: 700),
       (_) => _pollSystemMediaSession(),
     );
     return const MultimediaHubState();
@@ -137,6 +160,7 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
     final sourceName =
         (raw['sourceAppName'] as String?) ?? state.sourceAppName;
     final artBytes = raw['albumArtBytes'] as Uint8List?;
+    final artUri = raw['albumArtUri'] as String?;
 
     var currentStep = state.currentStep;
     var maxStep = state.maxStep;
@@ -166,6 +190,8 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
       sourceAppName: sourceName,
       albumArtBytes: artBytes,
       clearAlbumArt: artBytes == null,
+      albumArtUri: artUri,
+      clearAlbumArtUri: artUri == null,
       currentStep: currentStep,
       maxStep: maxStep,
       volumePercent: volumePercent,
@@ -173,14 +199,12 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
     );
   }
 
-  /// Abre el ajuste de Android una sola vez para autorizar la lectura de carátulas y sesiones multimedia
   Future<void> openMediaPermissionSettings() async {
     try {
       await _channel.invokeMethod<bool>('openMediaListenerSettings');
     } catch (_) {}
   }
 
-  /// Abre la aplicación del reproductor activo actual (ej. Spotify)
   Future<void> openActivePlayerApp() async {
     HapticFeedback.lightImpact();
     try {
@@ -194,7 +218,6 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
     } catch (_) {}
   }
 
-  /// Controles de reproducción (Play/Pause, Siguiente, Anterior)
   Future<void> sendMediaTransportCommand(String command) async {
     HapticFeedback.lightImpact();
     try {
@@ -210,7 +233,39 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
     } catch (_) {}
   }
 
-  /// Permite adelantar o atrasar la canción desde la barra de progreso
+  Future<void> toggleShuffle() async {
+    HapticFeedback.selectionClick();
+    final nextVal = !state.shuffleEnabled;
+    state = state.copyWith(shuffleEnabled: nextVal);
+    try {
+      await _channel.invokeMethod<bool>(
+        'toggleShuffle',
+        <String, dynamic>{'enabled': nextVal},
+      );
+    } catch (_) {}
+  }
+
+  Future<void> cycleRepeatMode() async {
+    HapticFeedback.selectionClick();
+    final nextMode = switch (state.repeatMode) {
+      MediaRepeatMode.off => MediaRepeatMode.all,
+      MediaRepeatMode.all => MediaRepeatMode.one,
+      MediaRepeatMode.one => MediaRepeatMode.off,
+    };
+    state = state.copyWith(repeatMode: nextMode);
+    final androidRepeatInt = switch (nextMode) {
+      MediaRepeatMode.off => 0,
+      MediaRepeatMode.one => 1,
+      MediaRepeatMode.all => 2,
+    };
+    try {
+      await _channel.invokeMethod<bool>(
+        'toggleRepeat',
+        <String, dynamic>{'mode': androidRepeatInt},
+      );
+    } catch (_) {}
+  }
+
   Future<void> seekToRatio(double ratio) async {
     if (state.durationMs <= 0) return;
     final targetMs = (ratio.clamp(0.0, 1.0) * state.durationMs).round();
@@ -223,9 +278,8 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
     } catch (_) {}
   }
 
-  /// Controla directamente el volumen de la tablet desde el Slider
-  /// (Mover manualmente el slider desactiva el modo ATT si estaba activo)
-  Future<void> setTabletVolume(double nextPercent, {bool showUi = false}) async {
+  /// Ajusta el volumen de la tablet silenciosamente (sin popup del sistema Android)
+  Future<void> setTabletVolume(double nextPercent) async {
     final clamped = nextPercent.clamp(0.0, 1.0);
     state = state.copyWith(
       volumePercent: clamped,
@@ -236,15 +290,11 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
     try {
       await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'setVolume',
-        <String, dynamic>{
-          'percent': clamped,
-          'showUi': showUi,
-        },
+        <String, dynamic>{'percent': clamped},
       );
     } catch (_) {}
   }
 
-  /// Sube o baja 1 paso el volumen de la tablet
   Future<void> adjustVolumeStep(int delta) async {
     HapticFeedback.selectionClick();
     state = state.copyWith(isAttenuated: false);
@@ -269,14 +319,14 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
     } catch (_) {}
   }
 
-  /// Botón **ATT (Atenuación)**:
-  /// - 1er toque: Guarda el volumen actual y lo reduce un 75% de donde está (quedando al 25% de su nivel previo).
-  /// - 2do toque: Restaura el volumen exactamente a donde estaba antes de tocar ATT.
+  /// Botón **ATT (Atenuación -75%)** al lado izquierdo:
+  /// - 1er toque: baja el volumen un 75% desde el nivel actual (queda al 25%).
+  /// - 2do toque: regresa el volumen exactamente a donde estaba antes de tocar ATT.
   Future<void> toggleAttenuation() async {
     HapticFeedback.mediumImpact();
     if (!state.isAttenuated) {
       final originalVol = state.volumePercent > 0.04 ? state.volumePercent : 0.60;
-      final attenuatedVol = (originalVol * 0.25).clamp(0.0, 1.0); // Baja un 75% de donde está
+      final attenuatedVol = (originalVol * 0.25).clamp(0.0, 1.0);
       state = state.copyWith(
         preAttVolumePercent: originalVol,
         isAttenuated: true,
@@ -286,10 +336,7 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
       try {
         await _channel.invokeMethod<Map<dynamic, dynamic>>(
           'setVolume',
-          <String, dynamic>{
-            'percent': attenuatedVol,
-            'showUi': true,
-          },
+          <String, dynamic>{'percent': attenuatedVol},
         );
       } catch (_) {}
     } else {
@@ -302,10 +349,7 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
       try {
         await _channel.invokeMethod<Map<dynamic, dynamic>>(
           'setVolume',
-          <String, dynamic>{
-            'percent': restoredVol,
-            'showUi': true,
-          },
+          <String, dynamic>{'percent': restoredVol},
         );
       } catch (_) {}
     }
@@ -317,10 +361,10 @@ final multimediaHubProvider =
   MultimediaHubNotifier.new,
 );
 
-/// Menú **MULTIMEDIA** limpio y relajado:
-/// 1) Reproductor principal conectado al evento multimedia del sistema Android
-///    (Carátula del álbum, título, artista, barra de progreso interactiva y controles).
-/// 2) Barra inferior de volumen con Slider nativo de la tablet y botón **ATT** (-75% / restaurar).
+/// Menú **MULTIMEDIA** rediseñado:
+/// - Tarjeta principal con el arte de la canción a fondo completo + filtro claro translúcido.
+/// - Interfaz limpia y centrada con botones Random (Shuffle), Anterior, Play/Pausa, Siguiente y Repeat.
+/// - Barra de volumen inferior con botón **ATT** al lado izquierdo y slider silencioso (sin popup Android).
 class MultimediaHubScreen extends ConsumerWidget {
   const MultimediaHubScreen({super.key});
 
@@ -331,7 +375,7 @@ class MultimediaHubScreen extends ConsumerWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final isCompactHeight = constraints.maxHeight < 430;
+        final isCompactHeight = constraints.maxHeight < 420;
 
         if (isCompactHeight) {
           return SingleChildScrollView(
@@ -340,13 +384,13 @@ class MultimediaHubScreen extends ConsumerWidget {
               children: [
                 SizedBox(
                   height: 310,
-                  child: _SystemMediaPlayerCard(
+                  child: _FullArtworkCenteredPlayerCard(
                     state: mediaState,
                     notifier: mediaNotifier,
                   ),
                 ),
                 const SizedBox(height: 10),
-                _VolumeAndAttenuationBar(
+                _VolumeBarWithLeftAtt(
                   state: mediaState,
                   notifier: mediaNotifier,
                 ),
@@ -358,17 +402,14 @@ class MultimediaHubScreen extends ConsumerWidget {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 1. Reproductor Principal (Carátula, Canción, Progreso y Controles)
             Expanded(
-              child: _SystemMediaPlayerCard(
+              child: _FullArtworkCenteredPlayerCard(
                 state: mediaState,
                 notifier: mediaNotifier,
               ),
             ),
             const SizedBox(height: 10),
-
-            // 2. Barra Inferior de Volumen + Botón ATT (-75%)
-            _VolumeAndAttenuationBar(
+            _VolumeBarWithLeftAtt(
               state: mediaState,
               notifier: mediaNotifier,
             ),
@@ -379,11 +420,11 @@ class MultimediaHubScreen extends ConsumerWidget {
   }
 }
 
-class _SystemMediaPlayerCard extends StatelessWidget {
+class _FullArtworkCenteredPlayerCard extends StatelessWidget {
   final MultimediaHubState state;
   final MultimediaHubNotifier notifier;
 
-  const _SystemMediaPlayerCard({
+  const _FullArtworkCenteredPlayerCard({
     required this.state,
     required this.notifier,
   });
@@ -398,194 +439,169 @@ class _SystemMediaPlayerCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    const inkColor = Color(0xFF0F172A);
+    const mutedInkColor = Color(0xFF334155);
 
     return Card(
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: <Color>[
-              primary.withValues(alpha: isDark ? 0.14 : 0.08),
-              Colors.transparent,
-            ],
-          ),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 18),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final isHorizontal = constraints.maxWidth >= 620;
-            final maxArtworkSize = isHorizontal
-                ? (constraints.maxHeight * 0.78).clamp(130.0, 250.0)
-                : (constraints.maxHeight * 0.38).clamp(100.0, 165.0);
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // 1. Fondo completo con el arte de la canción
+          if (state.albumArtBytes != null)
+            Image.memory(
+              state.albumArtBytes!,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+            )
+          else if (state.albumArtUri != null &&
+              (state.albumArtUri!.startsWith('http://') ||
+                  state.albumArtUri!.startsWith('https://')))
+            CachedNetworkImage(
+              imageUrl: state.albumArtUri!,
+              fit: BoxFit.cover,
+              errorWidget: (_, __, ___) => _FallbackBackdrop(primary: primary),
+            )
+          else
+            _FallbackBackdrop(primary: primary),
 
-            final artworkWidget = Center(
-              child: Container(
-                width: maxArtworkSize,
-                height: maxArtworkSize,
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? const Color(0xFF141821)
-                      : const Color(0xFFE2E8F0),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: primary.withValues(alpha: 0.45),
-                    width: 1.6,
-                  ),
-                  boxShadow: <BoxShadow>[
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.38),
-                      blurRadius: 18,
-                      offset: const Offset(0, 8),
-                    ),
+          // 2. Filtro claro translúcido con desenfoque sutil para legibilidad perfecta
+          BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: <Color>[
+                    Colors.white.withValues(alpha: 0.62),
+                    const Color(0xFFF1F5F9).withValues(alpha: 0.74),
+                    const Color(0xFFE2E8F0).withValues(alpha: 0.80),
                   ],
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: state.albumArtBytes != null
-                    ? Image.memory(
-                        state.albumArtBytes!,
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
-                      )
-                    : Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Icon(
-                            Icons.album_rounded,
-                            size: maxArtworkSize * 0.62,
-                            color: primary.withValues(alpha: 0.28),
-                          ),
-                          Icon(
-                            Icons.music_note_rounded,
-                            size: maxArtworkSize * 0.24,
-                            color: primary,
-                          ),
-                        ],
-                      ),
               ),
-            );
+            ),
+          ),
 
-            final detailsAndControls = Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: isHorizontal
-                  ? CrossAxisAlignment.start
-                  : CrossAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Etiqueta de la fuente actual + Acceso rápido a permisos si falta
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
+          // 3. Interfaz Centrada de Metadatos, Progreso y Controles
+          Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 20),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 680),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    InkWell(
-                      onTap: notifier.openActivePlayerApp,
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: primary.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: primary.withValues(alpha: 0.6),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.graphic_eq_rounded,
-                              size: 15,
-                              color: primary,
+                    // Fuente activa + botón de permiso si aún no se habilita
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        InkWell(
+                          onTap: notifier.openActivePlayerApp,
+                          borderRadius: BorderRadius.circular(20),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 5,
                             ),
-                            const SizedBox(width: 6),
-                            Text(
-                              state.sourceAppName.toUpperCase(),
-                              style: AppTheme.telemetryNumericStyle(
-                                fontSize: 11,
-                                color: primary,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.72),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                color: inkColor.withValues(alpha: 0.16),
                               ),
                             ),
-                            const SizedBox(width: 4),
-                            Icon(
-                              Icons.open_in_new_rounded,
-                              size: 12,
-                              color: primary,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.graphic_eq_rounded,
+                                  size: 16,
+                                  color: primary,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  state.sourceAppName.toUpperCase(),
+                                  style: AppTheme.telemetryNumericStyle(
+                                    fontSize: 11,
+                                    color: inkColor,
+                                  ),
+                                ),
+                                const SizedBox(width: 5),
+                                const Icon(
+                                  Icons.open_in_new_rounded,
+                                  size: 13,
+                                  color: mutedInkColor,
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    if (!state.hasMediaPermission)
-                      OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
                           ),
                         ),
-                        onPressed: notifier.openMediaPermissionSettings,
-                        icon: const Icon(
-                          Icons.art_track_rounded,
-                          size: 16,
-                        ),
-                        label: const Text(
-                          'HABILITAR LECTURA DE CARÁTULA',
-                          style: TextStyle(fontSize: 11),
-                        ),
+                        if (!state.hasMediaPermission)
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: inkColor,
+                              foregroundColor: Colors.white,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            onPressed: notifier.openMediaPermissionSettings,
+                            icon: const Icon(Icons.art_track_rounded, size: 16),
+                            label: const Text(
+                              'HABILITAR CARÁTULAS',
+                              style: TextStyle(fontSize: 11),
+                            ),
+                          ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 18),
+
+                    // Título de la canción centrado
+                    Text(
+                      state.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: AppTheme.renaultSportHeaderStyle(
+                        fontSize: 28,
+                        color: inkColor,
                       ),
-                  ],
-                ),
+                    ),
+                    const SizedBox(height: 6),
 
-                const SizedBox(height: 12),
+                    // Artista y álbum centrados
+                    Text(
+                      state.album.isNotEmpty
+                          ? '${state.artist}  •  ${state.album}'
+                          : state.artist,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: mutedInkColor,
+                      ),
+                    ),
 
-                // Título de la Canción
-                Text(
-                  state.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: isHorizontal ? TextAlign.start : TextAlign.center,
-                  style: AppTheme.renaultSportHeaderStyle(
-                    fontSize: isHorizontal ? 24 : 19,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-                const SizedBox(height: 4),
+                    const SizedBox(height: 22),
 
-                // Artista y Álbum
-                Text(
-                  state.album.isNotEmpty
-                      ? '${state.artist}  •  ${state.album}'
-                      : state.artist,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: isHorizontal ? TextAlign.start : TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                    color: isDark ? Colors.white70 : Colors.black54,
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-
-                // Barra de Progreso de la Canción + Tiempos
-                Column(
-                  children: [
+                    // Barra de progreso interactiva centrada
                     SliderTheme(
                       data: SliderTheme.of(context).copyWith(
+                        activeTrackColor: inkColor,
+                        inactiveTrackColor: inkColor.withValues(alpha: 0.22),
+                        thumbColor: primary,
                         trackHeight: 6,
                         thumbShape: const RoundSliderThumbShape(
                           enabledThumbRadius: 8,
                         ),
                         overlayShape: const RoundSliderOverlayShape(
-                          overlayRadius: 14,
+                          overlayRadius: 15,
                         ),
                       ),
                       child: Slider(
@@ -598,160 +614,229 @@ class _SystemMediaPlayerCard extends StatelessWidget {
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
                             _formatMs(state.positionMs),
                             style: AppTheme.telemetryNumericStyle(
-                              fontSize: 11.5,
-                              color: isDark ? Colors.white70 : Colors.black54,
+                              fontSize: 12,
+                              color: mutedInkColor,
                             ),
                           ),
                           Text(
                             _formatMs(state.durationMs),
                             style: AppTheme.telemetryNumericStyle(
-                              fontSize: 11.5,
-                              color: isDark ? Colors.white70 : Colors.black54,
+                              fontSize: 12,
+                              color: mutedInkColor,
                             ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Controles Centrados: Random, Anterior, Play/Pausa, Siguiente, Repeat
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // RANDOM (SHUFFLE)
+                          _CenteredMediaButton(
+                            icon: Icons.shuffle_rounded,
+                            tooltip: 'Aleatorio (Random)',
+                            size: 46,
+                            iconSize: 22,
+                            active: state.shuffleEnabled,
+                            accentColor: primary,
+                            inkColor: inkColor,
+                            onTap: notifier.toggleShuffle,
+                          ),
+                          const SizedBox(width: 16),
+
+                          // ANTERIOR
+                          _CenteredMediaButton(
+                            icon: Icons.skip_previous_rounded,
+                            tooltip: 'Anterior',
+                            size: 56,
+                            iconSize: 30,
+                            accentColor: primary,
+                            inkColor: inkColor,
+                            onTap: () =>
+                                notifier.sendMediaTransportCommand('previous'),
+                          ),
+                          const SizedBox(width: 20),
+
+                          // PLAY / PAUSA
+                          _CenteredMediaButton(
+                            icon: state.isPlaying
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                            tooltip: state.isPlaying ? 'Pausar' : 'Reproducir',
+                            size: 74,
+                            iconSize: 42,
+                            isPrimaryFocal: true,
+                            accentColor: primary,
+                            inkColor: inkColor,
+                            onTap: () => notifier
+                                .sendMediaTransportCommand('play_pause'),
+                          ),
+                          const SizedBox(width: 20),
+
+                          // SIGUIENTE
+                          _CenteredMediaButton(
+                            icon: Icons.skip_next_rounded,
+                            tooltip: 'Siguiente',
+                            size: 56,
+                            iconSize: 30,
+                            accentColor: primary,
+                            inkColor: inkColor,
+                            onTap: () =>
+                                notifier.sendMediaTransportCommand('next'),
+                          ),
+                          const SizedBox(width: 16),
+
+                          // REPEAT (Off -> Todo -> 1 Canción)
+                          _CenteredMediaButton(
+                            icon: state.repeatMode == MediaRepeatMode.one
+                                ? Icons.repeat_one_rounded
+                                : Icons.repeat_rounded,
+                            tooltip: switch (state.repeatMode) {
+                              MediaRepeatMode.off => 'Repetir: Desactivado',
+                              MediaRepeatMode.all => 'Repetir: Lista',
+                              MediaRepeatMode.one => 'Repetir: 1 Canción',
+                            },
+                            size: 46,
+                            iconSize: 22,
+                            active: state.repeatMode != MediaRepeatMode.off,
+                            accentColor: primary,
+                            inkColor: inkColor,
+                            onTap: notifier.cycleRepeatMode,
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-
-                const SizedBox(height: 10),
-
-                // Controles de Transporte Multimedia (Anterior, Play/Pause, Siguiente)
-                Row(
-                  mainAxisAlignment: isHorizontal
-                      ? MainAxisAlignment.start
-                      : MainAxisAlignment.center,
-                  children: [
-                    _MediaCircleButton(
-                      icon: Icons.skip_previous_rounded,
-                      size: 54,
-                      iconSize: 28,
-                      color: primary,
-                      onTap: () =>
-                          notifier.sendMediaTransportCommand('previous'),
-                    ),
-                    const SizedBox(width: 22),
-                    _MediaCircleButton(
-                      icon: state.isPlaying
-                          ? Icons.pause_rounded
-                          : Icons.play_arrow_rounded,
-                      size: 68,
-                      iconSize: 38,
-                      color: primary,
-                      filled: true,
-                      onTap: () =>
-                          notifier.sendMediaTransportCommand('play_pause'),
-                    ),
-                    const SizedBox(width: 22),
-                    _MediaCircleButton(
-                      icon: Icons.skip_next_rounded,
-                      size: 54,
-                      iconSize: 28,
-                      color: primary,
-                      onTap: () => notifier.sendMediaTransportCommand('next'),
-                    ),
-                  ],
-                ),
-              ],
-            );
-
-            if (isHorizontal) {
-              return Row(
-                children: [
-                  artworkWidget,
-                  const SizedBox(width: 28),
-                  Expanded(
-                    child: SingleChildScrollView(
-                      child: detailsAndControls,
-                    ),
-                  ),
-                ],
-              );
-            }
-
-            return SingleChildScrollView(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  artworkWidget,
-                  const SizedBox(height: 14),
-                  detailsAndControls,
-                ],
               ),
-            );
-          },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FallbackBackdrop extends StatelessWidget {
+  final Color primary;
+
+  const _FallbackBackdrop({required this.primary});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            primary.withValues(alpha: 0.45),
+            const Color(0xFF94A3B8),
+            const Color(0xFFCBD5E1),
+          ],
+        ),
+      ),
+      child: Center(
+        child: Icon(
+          Icons.album_rounded,
+          size: 220,
+          color: Colors.white.withValues(alpha: 0.25),
         ),
       ),
     );
   }
 }
 
-class _MediaCircleButton extends StatelessWidget {
+class _CenteredMediaButton extends StatelessWidget {
   final IconData icon;
+  final String tooltip;
   final double size;
   final double iconSize;
-  final Color color;
-  final bool filled;
+  final Color accentColor;
+  final Color inkColor;
+  final bool isPrimaryFocal;
+  final bool active;
   final VoidCallback onTap;
 
-  const _MediaCircleButton({
+  const _CenteredMediaButton({
     required this.icon,
+    required this.tooltip,
     required this.size,
     required this.iconSize,
-    required this.color,
+    required this.accentColor,
+    required this.inkColor,
     required this.onTap,
-    this.filled = false,
+    this.isPrimaryFocal = false,
+    this.active = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return InkWell(
-      onTap: onTap,
-      customBorder: const CircleBorder(),
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: filled ? color : color.withValues(alpha: 0.14),
-          border: Border.all(
-            color: color,
-            width: 1.8,
+    final bgColor = isPrimaryFocal
+        ? inkColor
+        : active
+            ? accentColor
+            : Colors.white.withValues(alpha: 0.68);
+    final fgColor = isPrimaryFocal
+        ? Colors.white
+        : active
+            ? Colors.white
+            : inkColor;
+
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: bgColor,
+            border: Border.all(
+              color: isPrimaryFocal || active
+                  ? Colors.transparent
+                  : inkColor.withValues(alpha: 0.18),
+              width: 1.4,
+            ),
+            boxShadow: isPrimaryFocal
+                ? <BoxShadow>[
+                    BoxShadow(
+                      color: inkColor.withValues(alpha: 0.30),
+                      blurRadius: 14,
+                      offset: const Offset(0, 6),
+                    ),
+                  ]
+                : null,
           ),
-          boxShadow: filled
-              ? <BoxShadow>[
-                  BoxShadow(
-                    color: color.withValues(alpha: 0.38),
-                    blurRadius: 12,
-                  ),
-                ]
-              : null,
-        ),
-        child: Icon(
-          icon,
-          size: iconSize,
-          color: filled ? (isDark ? Colors.black : Colors.white) : color,
+          child: Icon(icon, size: iconSize, color: fgColor),
         ),
       ),
     );
   }
 }
 
-/// Barra inferior dedicada al Volumen de la Tablet + Botón **ATT** (Atenuación -75%)
-class _VolumeAndAttenuationBar extends StatelessWidget {
+/// Barra inferior de Volumen con **ATT** en el lado izquierdo y Slider silencioso (sin popup Android)
+class _VolumeBarWithLeftAtt extends StatelessWidget {
   final MultimediaHubState state;
   final MultimediaHubNotifier notifier;
 
-  const _VolumeAndAttenuationBar({
+  const _VolumeBarWithLeftAtt({
     required this.state,
     required this.notifier,
   });
@@ -763,82 +848,18 @@ class _VolumeAndAttenuationBar extends StatelessWidget {
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         child: Row(
           children: [
-            // Icono de Volumen + Porcentaje
-            Icon(
-              state.isAttenuated
-                  ? Icons.volume_down_rounded
-                  : (pctInt == 0
-                      ? Icons.volume_off_rounded
-                      : Icons.volume_up_rounded),
-              color: state.isAttenuated
-                  ? RenaultSportPalette.siriusLiquidYellow
-                  : primary,
-              size: 24,
-            ),
-            const SizedBox(width: 8),
-            SizedBox(
-              width: 52,
-              child: Text(
-                '$pctInt%',
-                style: AppTheme.telemetryNumericStyle(
-                  fontSize: 15,
-                  color: state.isAttenuated
-                      ? RenaultSportPalette.siriusLiquidYellow
-                      : primary,
-                ),
-              ),
-            ),
-
-            // Botón Bajar Volumen (-)
-            IconButton(
-              tooltip: 'Bajar Volumen',
-              onPressed: () => notifier.adjustVolumeStep(-1),
-              icon: const Icon(Icons.remove_circle_outline_rounded),
-            ),
-
-            // Slider de Volumen Físico de la Tablet
-            Expanded(
-              child: SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  trackHeight: 10,
-                  thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 12,
-                  ),
-                ),
-                child: Slider(
-                  value: state.volumePercent,
-                  min: 0.0,
-                  max: 1.0,
-                  divisions: state.maxStep > 0 ? state.maxStep : 15,
-                  label: '$pctInt%',
-                  onChanged: (val) => notifier.setTabletVolume(val),
-                  onChangeEnd: (val) =>
-                      notifier.setTabletVolume(val, showUi: true),
-                ),
-              ),
-            ),
-
-            // Botón Subir Volumen (+)
-            IconButton(
-              tooltip: 'Subir Volumen',
-              onPressed: () => notifier.adjustVolumeStep(1),
-              icon: const Icon(Icons.add_circle_outline_rounded),
-            ),
-
-            const SizedBox(width: 10),
-
-            // Botón ATT (Atenuación -75% con un toque / Restaurar con otro toque)
+            // 1. Botón ATT al lado IZQUIERDO (-75% con 1 toque / restaurar con otro)
             InkWell(
               onTap: notifier.toggleAttenuation,
               borderRadius: BorderRadius.circular(12),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 11,
+                  horizontal: 16,
+                  vertical: 10,
                 ),
                 decoration: BoxDecoration(
                   color: state.isAttenuated
@@ -854,8 +875,8 @@ class _VolumeAndAttenuationBar extends StatelessWidget {
                       ? <BoxShadow>[
                           BoxShadow(
                             color: RenaultSportPalette.siriusLiquidYellow
-                                .withValues(alpha: 0.45),
-                            blurRadius: 12,
+                                .withValues(alpha: 0.4),
+                            blurRadius: 10,
                           ),
                         ]
                       : null,
@@ -865,22 +886,86 @@ class _VolumeAndAttenuationBar extends StatelessWidget {
                   children: [
                     Icon(
                       Icons.graphic_eq_rounded,
-                      size: 18,
+                      size: 17,
                       color: state.isAttenuated
                           ? Colors.black
                           : RenaultSportPalette.siriusLiquidYellow,
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      state.isAttenuated ? 'ATT ON (-75%)' : 'ATT',
+                      state.isAttenuated ? 'ATT -75%' : 'ATT',
                       style: AppTheme.renaultSportHeaderStyle(
-                        fontSize: 13.5,
+                        fontSize: 13,
                         color: state.isAttenuated
                             ? Colors.black
                             : RenaultSportPalette.siriusLiquidYellow,
                       ),
                     ),
                   ],
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 12),
+
+            // 2. Botón Bajar Volumen (-)
+            IconButton(
+              tooltip: 'Bajar Volumen',
+              onPressed: () => notifier.adjustVolumeStep(-1),
+              icon: const Icon(Icons.remove_circle_outline_rounded),
+            ),
+
+            // 3. Slider de Volumen Físico de la Tablet (silencioso, sin popup de sistema)
+            Expanded(
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 10,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 12,
+                  ),
+                ),
+                child: Slider(
+                  value: state.volumePercent,
+                  min: 0.0,
+                  max: 1.0,
+                  divisions: state.maxStep > 0 ? state.maxStep : 15,
+                  onChanged: (val) => notifier.setTabletVolume(val),
+                ),
+              ),
+            ),
+
+            // 4. Botón Subir Volumen (+)
+            IconButton(
+              tooltip: 'Subir Volumen',
+              onPressed: () => notifier.adjustVolumeStep(1),
+              icon: const Icon(Icons.add_circle_outline_rounded),
+            ),
+
+            const SizedBox(width: 6),
+
+            // 5. Icono y Porcentaje a la derecha
+            Icon(
+              state.isAttenuated
+                  ? Icons.volume_down_rounded
+                  : (pctInt == 0
+                      ? Icons.volume_off_rounded
+                      : Icons.volume_up_rounded),
+              color: state.isAttenuated
+                  ? RenaultSportPalette.siriusLiquidYellow
+                  : primary,
+              size: 22,
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 46,
+              child: Text(
+                '$pctInt%',
+                textAlign: TextAlign.right,
+                style: AppTheme.telemetryNumericStyle(
+                  fontSize: 14.5,
+                  color: state.isAttenuated
+                      ? RenaultSportPalette.siriusLiquidYellow
+                      : primary,
                 ),
               ),
             ),

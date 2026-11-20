@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../auth_profile/providers/auth_profile_providers.dart';
-import '../../sensors/biometric_immobilizer_service.dart';
 import '../models/garage_models.dart';
 
 /// Catálogo oficial de refacciones para el Renault Clio II RS 172 (Motor F4R 736)
@@ -185,18 +184,6 @@ class DigitalGaragePaymentNotifier extends Notifier<DigitalGaragePaymentState> {
       return;
     }
 
-    // 1. Solicitar autorización biométrica nativa en la Pixel Tablet (`local_auth`)
-    final bioOk = await ref.read(biometricImmobilizerProvider.notifier).authenticateDriver(
-          reason: 'Autoriza con tu huella el cargo de ${tier.priceLabel} (${tier.title})',
-        );
-    if (!bioOk) {
-      state = state.copyWith(
-        paymentFeedback: 'Pago cancelado: se requiere autorización biométrica del piloto.',
-        isPaymentError: true,
-      );
-      return;
-    }
-
     state = state.copyWith(
       isProcessingPayment: true,
       paymentFeedback: 'Procesando suscripción con Stripe / RevenueCat y Firebase...',
@@ -245,11 +232,6 @@ class DigitalGaragePaymentNotifier extends Notifier<DigitalGaragePaymentState> {
     }
 
     final totalMxn = state.cartSubtotalMxn;
-    final bioOk = await ref.read(biometricImmobilizerProvider.notifier).authenticateDriver(
-          reason:
-              'Autoriza el pago de refacciones Renault Sport por \$${totalMxn.toStringAsFixed(2)} MXN',
-        );
-    if (!bioOk) return;
 
     state = state.copyWith(
       isProcessingPayment: true,

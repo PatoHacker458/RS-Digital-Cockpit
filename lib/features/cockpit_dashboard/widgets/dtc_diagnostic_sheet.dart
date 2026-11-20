@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
-import '../../sensors/biometric_immobilizer_service.dart';
 import '../../telemetry/providers/telemetry_providers.dart';
 
 /// Apartado **ECU**:
-/// 1) Selector de Adaptador OBD-II Bluetooth (ELM327) vinculado en el dispositivo.
-/// 2) Diagnóstico y borrado de códigos de falla DTC (Modo 03 / Modo 04 Sirius 34).
-/// 3) Monitor de tramas K-Line (10.4 kbps).
-/// Diseño 100% responsivo para tablets y teléfonos sin desbordamientos.
+/// 1) Switch Maestro ON/OFF para activar o apagar el Bluetooth OBD2 (evitando interferencia con audio).
+/// 2) Selector de Adaptador OBD-II Bluetooth (ELM327).
+/// 3) Diagnóstico y borrado de códigos de falla DTC (Modo 03 / Modo 04 Sirius 34) sin bloqueo de inmovilizador.
+/// 4) Monitor serial de tramas K-Line (10.4 kbps).
 class DtcDiagnosticSheet extends ConsumerWidget {
   const DtcDiagnosticSheet({super.key});
 
@@ -29,77 +28,96 @@ class DtcDiagnosticSheet extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // 1. Tarjeta de Conexión al Adaptador OBD-II Bluetooth (ELM327)
+              // 1. Tarjeta Maestra de Control ECU Bluetooth (ON / OFF) + Selector ELM327
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(18),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 10,
-                        alignment: WrapAlignment.spaceBetween,
-                        crossAxisAlignment: WrapCrossAlignment.center,
+                      // Encabezado con Switch Maestro ON/OFF
+                      Row(
                         children: [
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                adapterState.isConnected
+                          Icon(
+                            !adapterState.ecuEnabled
+                                ? Icons.bluetooth_disabled_rounded
+                                : (adapterState.isConnected
                                     ? Icons.bluetooth_connected_rounded
-                                    : Icons.bluetooth_searching_rounded,
-                                color: adapterState.isConnected
+                                    : Icons.bluetooth_searching_rounded),
+                            color: !adapterState.ecuEnabled
+                                ? Colors.grey
+                                : (adapterState.isConnected
                                     ? RenaultSportPalette.oemShiftGreen
-                                    : primary,
-                                size: 24,
-                              ),
-                              const SizedBox(width: 10),
-                              Flexible(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'ADAPTADOR OBD2 ELM327 (KWP2000)',
-                                      style: AppTheme.renaultSportHeaderStyle(
-                                        fontSize: 16,
-                                        color: primary,
-                                      ),
-                                    ),
-                                    Text(
-                                      adapterState.statusText,
-                                      style: const TextStyle(fontSize: 12),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
+                                    : primary),
+                            size: 26,
                           ),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            children: [
-                              OutlinedButton.icon(
-                                onPressed: obdNotifier.scanPairedBluetoothDevices,
-                                icon: const Icon(Icons.refresh_rounded, size: 17),
-                                label: const Text('BUSCAR VINCULADOS'),
-                              ),
-                              OutlinedButton.icon(
-                                onPressed: obdNotifier.openSystemBluetoothSettings,
-                                icon: const Icon(
-                                  Icons.settings_bluetooth_rounded,
-                                  size: 17,
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'CONEXIÓN ECU OBD2 (ELM327)',
+                                  style: AppTheme.renaultSportHeaderStyle(
+                                    fontSize: 16,
+                                    color: adapterState.ecuEnabled
+                                        ? primary
+                                        : Colors.grey,
+                                  ),
                                 ),
-                                label: const Text('EMPAREJAR NUEVO'),
+                                Text(
+                                  adapterState.statusText,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: (adapterState.ecuEnabled
+                                      ? RenaultSportPalette.oemShiftGreen
+                                      : Colors.grey)
+                                  .withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: adapterState.ecuEnabled
+                                    ? RenaultSportPalette.oemShiftGreen
+                                    : Colors.grey,
                               ),
-                            ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  adapterState.ecuEnabled ? 'ECU ON' : 'ECU OFF',
+                                  style: AppTheme.telemetryNumericStyle(
+                                    fontSize: 11.5,
+                                    color: adapterState.ecuEnabled
+                                        ? RenaultSportPalette.oemShiftGreen
+                                        : Colors.grey,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Switch(
+                                  value: adapterState.ecuEnabled,
+                                  activeThumbColor:
+                                      RenaultSportPalette.oemShiftGreen,
+                                  onChanged: (val) =>
+                                      obdNotifier.setEcuEnabled(val),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 14),
 
-                      // Lista de dispositivos Bluetooth vinculados en Android
-                      if (adapterState.pairedDevices.isEmpty)
+                      if (!adapterState.ecuEnabled) ...[
+                        const SizedBox(height: 12),
                         Container(
                           padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
@@ -109,120 +127,167 @@ class DtcDiagnosticSheet extends ConsumerWidget {
                           ),
                           child: const Row(
                             children: [
-                              Icon(Icons.info_outline_rounded, size: 20),
+                              Icon(Icons.headphones_rounded, size: 20),
                               SizedBox(width: 10),
                               Expanded(
                                 child: Text(
-                                  'No se encontraron adaptadores Bluetooth vinculados. Toca "Emparejar Nuevo" para vincular tu ELM327 (PIN usual: 1234 o 0000) y luego presiona "Buscar Vinculados".',
+                                  'Módulo ECU Bluetooth apagado. El socket OBD2 está desconectado para evitar cualquier interferencia mientras escuchas música por Bluetooth.',
                                   style: TextStyle(fontSize: 12.5),
                                 ),
                               ),
                             ],
                           ),
-                        )
-                      else
+                        ),
+                      ] else ...[
+                        const SizedBox(height: 12),
                         Wrap(
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: adapterState.pairedDevices.map((device) {
-                            final isSelected =
-                                device.macAddress == adapterState.selectedMacAddress &&
-                                    !isSimulator;
-                            return InkWell(
-                              onTap: () => obdNotifier.connectToBluetoothAdapter(
-                                macAddress: device.macAddress,
-                                deviceName: device.name,
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: obdNotifier.scanPairedBluetoothDevices,
+                              icon:
+                                  const Icon(Icons.refresh_rounded, size: 17),
+                              label: const Text('BUSCAR VINCULADOS'),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: obdNotifier.openSystemBluetoothSettings,
+                              icon: const Icon(
+                                Icons.settings_bluetooth_rounded,
+                                size: 17,
                               ),
+                              label: const Text('EMPAREJAR NUEVO'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+
+                        if (adapterState.pairedDevices.isEmpty)
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Colors.black12,
                               borderRadius: BorderRadius.circular(12),
-                              child: Container(
-                                width: 265,
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: isSelected
-                                      ? RenaultSportPalette.oemShiftGreen
-                                          .withValues(alpha: 0.14)
-                                      : Colors.black12,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: isSelected
-                                        ? RenaultSportPalette.oemShiftGreen
-                                        : (device.looksLikeObdAdapter
-                                            ? primary
-                                            : Colors.white12),
-                                    width: isSelected ? 1.8 : 1.0,
+                              border: Border.all(color: Colors.white12),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.info_outline_rounded, size: 20),
+                                SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    'No se encontraron adaptadores Bluetooth vinculados. Toca "Emparejar Nuevo" (PIN: 1234 o 0000) y luego presiona "Buscar Vinculados".',
+                                    style: TextStyle(fontSize: 12.5),
                                   ),
                                 ),
-                                child: Row(
-                                  children: [
-                                    Icon(
-                                      device.looksLikeObdAdapter
-                                          ? Icons.directions_car_filled_rounded
-                                          : Icons.bluetooth_rounded,
+                              ],
+                            ),
+                          )
+                        else
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: adapterState.pairedDevices.map((device) {
+                              final isSelected = device.macAddress ==
+                                      adapterState.selectedMacAddress &&
+                                  !isSimulator;
+                              return InkWell(
+                                onTap: () =>
+                                    obdNotifier.connectToBluetoothAdapter(
+                                  macAddress: device.macAddress,
+                                  deviceName: device.name,
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                                child: Container(
+                                  width: 265,
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: isSelected
+                                        ? RenaultSportPalette.oemShiftGreen
+                                            .withValues(alpha: 0.14)
+                                        : Colors.black12,
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
                                       color: isSelected
                                           ? RenaultSportPalette.oemShiftGreen
-                                          : primary,
+                                          : (device.looksLikeObdAdapter
+                                              ? primary
+                                              : Colors.white12),
+                                      width: isSelected ? 1.8 : 1.0,
                                     ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            device.name,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                          Text(
-                                            device.macAddress,
-                                            style: AppTheme.telemetryNumericStyle(
-                                              fontSize: 11,
-                                              color: Colors.white60,
-                                            ),
-                                          ),
-                                        ],
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        device.looksLikeObdAdapter
+                                            ? Icons
+                                                .directions_car_filled_rounded
+                                            : Icons.bluetooth_rounded,
+                                        color: isSelected
+                                            ? RenaultSportPalette.oemShiftGreen
+                                            : primary,
                                       ),
-                                    ),
-                                    if (isSelected && adapterState.isConnected)
-                                      const Icon(
-                                        Icons.check_circle_rounded,
-                                        color: RenaultSportPalette.oemShiftGreen,
-                                        size: 18,
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              device.name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                                fontSize: 13,
+                                              ),
+                                            ),
+                                            Text(
+                                              device.macAddress,
+                                              style:
+                                                  AppTheme.telemetryNumericStyle(
+                                                fontSize: 11,
+                                                color: Colors.white60,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                  ],
+                                      if (isSelected &&
+                                          adapterState.isConnected)
+                                        const Icon(
+                                          Icons.check_circle_rounded,
+                                          color:
+                                              RenaultSportPalette.oemShiftGreen,
+                                          size: 18,
+                                        ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            );
-                          }).toList(),
-                        ),
+                              );
+                            }).toList(),
+                          ),
 
-                      const Divider(height: 24),
+                        const Divider(height: 24),
 
-                      // Switch opcional de Simulador F4R (para pruebas fuera del auto)
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text(
-                          'Simulador de Telemetría F4R (Usar sin estar conectado al auto)',
-                          style: TextStyle(
-                            fontSize: 13.5,
-                            fontWeight: FontWeight.w600,
+                        // Switch opcional de Simulador F4R
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: const Text(
+                            'Simulador de Telemetría F4R (Pruebas sin auto)',
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          value: isSimulator,
+                          onChanged: (val) => obdNotifier.setConnectionMode(
+                            val
+                                ? ObdConnectionMode.trackSimulator
+                                : ObdConnectionMode.realElm327Bluetooth,
                           ),
                         ),
-                        subtitle: const Text(
-                          'Genera telemetría de pista cuando no tienes el ELM327 conectado.',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                        value: isSimulator,
-                        onChanged: (val) => obdNotifier.setConnectionMode(
-                          val
-                              ? ObdConnectionMode.trackSimulator
-                              : ObdConnectionMode.realElm327Bluetooth,
-                        ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -258,26 +323,21 @@ class DtcDiagnosticSheet extends ConsumerWidget {
                                 runSpacing: 8,
                                 children: [
                                   OutlinedButton.icon(
-                                    onPressed: () => ref
-                                        .read(sirius34DtcProvider.notifier)
-                                        .scanDtcCodes(),
-                                    icon: const Icon(Icons.radar_rounded, size: 16),
+                                    onPressed: adapterState.ecuEnabled
+                                        ? () => ref
+                                            .read(sirius34DtcProvider.notifier)
+                                            .scanDtcCodes()
+                                        : null,
+                                    icon: const Icon(Icons.radar_rounded,
+                                        size: 16),
                                     label: const Text('LEER DTC'),
                                   ),
                                   ElevatedButton.icon(
-                                    onPressed: () async {
-                                      final bioOk = await ref
-                                          .read(biometricImmobilizerProvider.notifier)
-                                          .authenticateDriver(
-                                            reason:
-                                                'Autoriza borrar códigos DTC de la ECU',
-                                          );
-                                      if (bioOk) {
-                                        await ref
+                                    onPressed: adapterState.ecuEnabled
+                                        ? () => ref
                                             .read(sirius34DtcProvider.notifier)
-                                            .clearAllDtcCodes();
-                                      }
-                                    },
+                                            .clearAllDtcCodes()
+                                        : null,
                                     icon: const Icon(
                                       Icons.delete_sweep_rounded,
                                       size: 16,
@@ -300,10 +360,13 @@ class DtcDiagnosticSheet extends ConsumerWidget {
                                         Icon(
                                           Icons.check_circle_outline_rounded,
                                           size: 40,
-                                          color: RenaultSportPalette.oemShiftGreen,
+                                          color:
+                                              RenaultSportPalette.oemShiftGreen,
                                         ),
                                         SizedBox(height: 8),
-                                        Text('ECU sin códigos de falla registrados'),
+                                        Text(
+                                          'ECU sin códigos de falla registrados',
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -323,14 +386,16 @@ class DtcDiagnosticSheet extends ConsumerWidget {
                                             .withValues(alpha: 0.18),
                                         borderRadius: BorderRadius.circular(6),
                                         border: Border.all(
-                                          color: RenaultSportPalette.revLimiterRed,
+                                          color:
+                                              RenaultSportPalette.revLimiterRed,
                                         ),
                                       ),
                                       child: Text(
                                         fault.code,
                                         style: AppTheme.telemetryNumericStyle(
                                           fontSize: 12,
-                                          color: RenaultSportPalette.revLimiterRed,
+                                          color:
+                                              RenaultSportPalette.revLimiterRed,
                                         ),
                                       ),
                                     ),
