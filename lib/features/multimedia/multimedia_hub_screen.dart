@@ -484,246 +484,256 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
           ),
 
           // 3. Interfaz Centrada de Metadatos, Progreso y Controles
-          Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 20),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 680),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    // Fuente activa + botón de permiso si aún no se habilita
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 8,
-                      alignment: WrapAlignment.center,
-                      crossAxisAlignment: WrapCrossAlignment.center,
+          LayoutBuilder(
+            builder: (context, cardConstraints) {
+              final isNarrow = cardConstraints.maxWidth < 460;
+              return Center(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.symmetric(
+                    horizontal: isNarrow ? 16 : 28,
+                    vertical: isNarrow ? 14 : 20,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 680),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        InkWell(
-                          onTap: notifier.openActivePlayerApp,
-                          borderRadius: BorderRadius.circular(20),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.72),
+                        // Fuente activa + botón de permiso si aún no se habilita
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 8,
+                          alignment: WrapAlignment.center,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            InkWell(
+                              onTap: notifier.openActivePlayerApp,
                               borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                color: inkColor.withValues(alpha: 0.16),
-                              ),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.graphic_eq_rounded,
-                                  size: 16,
-                                  color: primary,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 5,
                                 ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  state.sourceAppName.toUpperCase(),
-                                  style: AppTheme.telemetryNumericStyle(
-                                    fontSize: 11,
-                                    color: inkColor,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.72),
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(
+                                    color: inkColor.withValues(alpha: 0.16),
                                   ),
                                 ),
-                                const SizedBox(width: 5),
-                                const Icon(
-                                  Icons.open_in_new_rounded,
-                                  size: 13,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.graphic_eq_rounded,
+                                      size: 16,
+                                      color: primary,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      state.sourceAppName.toUpperCase(),
+                                      style: AppTheme.telemetryNumericStyle(
+                                        fontSize: 11,
+                                        color: inkColor,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 5),
+                                    const Icon(
+                                      Icons.open_in_new_rounded,
+                                      size: 13,
+                                      color: mutedInkColor,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            if (!state.hasMediaPermission)
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: inkColor,
+                                  foregroundColor: Colors.white,
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                                onPressed: notifier.openMediaPermissionSettings,
+                                icon: const Icon(Icons.art_track_rounded,
+                                    size: 16),
+                                label: const Text(
+                                  'HABILITAR CARÁTULAS',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                              ),
+                          ],
+                        ),
+
+                        SizedBox(height: isNarrow ? 12 : 18),
+
+                        // Título de la canción centrado
+                        Text(
+                          state.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: AppTheme.renaultSportHeaderStyle(
+                            fontSize: isNarrow ? 22 : 28,
+                            color: inkColor,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+
+                        // Artista y álbum centrados
+                        Text(
+                          state.album.isNotEmpty
+                              ? '${state.artist}  •  ${state.album}'
+                              : state.artist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: isNarrow ? 13.5 : 15,
+                            fontWeight: FontWeight.w600,
+                            color: mutedInkColor,
+                          ),
+                        ),
+
+                        SizedBox(height: isNarrow ? 14 : 22),
+
+                        // Barra de progreso interactiva centrada
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            activeTrackColor: inkColor,
+                            inactiveTrackColor:
+                                inkColor.withValues(alpha: 0.22),
+                            thumbColor: primary,
+                            trackHeight: 6,
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 8,
+                            ),
+                            overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 15,
+                            ),
+                          ),
+                          child: Slider(
+                            value: state.progressRatio,
+                            min: 0.0,
+                            max: 1.0,
+                            onChanged: state.durationMs > 0
+                                ? (val) => notifier.seekToRatio(val)
+                                : null,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _formatMs(state.positionMs),
+                                style: AppTheme.telemetryNumericStyle(
+                                  fontSize: 12,
                                   color: mutedInkColor,
                                 ),
-                              ],
-                            ),
+                              ),
+                              Text(
+                                _formatMs(state.durationMs),
+                                style: AppTheme.telemetryNumericStyle(
+                                  fontSize: 12,
+                                  color: mutedInkColor,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        if (!state.hasMediaPermission)
-                          ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: inkColor,
-                              foregroundColor: Colors.white,
-                              visualDensity: VisualDensity.compact,
-                            ),
-                            onPressed: notifier.openMediaPermissionSettings,
-                            icon: const Icon(Icons.art_track_rounded, size: 16),
-                            label: const Text(
-                              'HABILITAR CARÁTULAS',
-                              style: TextStyle(fontSize: 11),
-                            ),
+
+                        const SizedBox(height: 16),
+
+                        // Controles Centrados: Random, Anterior, Play/Pausa, Siguiente, Repeat
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              // RANDOM (SHUFFLE)
+                              _CenteredMediaButton(
+                                icon: Icons.shuffle_rounded,
+                                tooltip: 'Aleatorio (Random)',
+                                size: 56,
+                                iconSize: 27,
+                                active: state.shuffleEnabled,
+                                accentColor: primary,
+                                inkColor: inkColor,
+                                onTap: notifier.toggleShuffle,
+                              ),
+                              const SizedBox(width: 18),
+
+                              // ANTERIOR
+                              _CenteredMediaButton(
+                                icon: Icons.skip_previous_rounded,
+                                tooltip: 'Anterior',
+                                size: 68,
+                                iconSize: 36,
+                                accentColor: primary,
+                                inkColor: inkColor,
+                                onTap: () => notifier
+                                    .sendMediaTransportCommand('previous'),
+                              ),
+                              const SizedBox(width: 22),
+
+                              // PLAY / PAUSA
+                              _CenteredMediaButton(
+                                icon: state.isPlaying
+                                    ? Icons.pause_rounded
+                                    : Icons.play_arrow_rounded,
+                                tooltip:
+                                    state.isPlaying ? 'Pausar' : 'Reproducir',
+                                size: 88,
+                                iconSize: 48,
+                                isPrimaryFocal: true,
+                                accentColor: primary,
+                                inkColor: inkColor,
+                                onTap: () => notifier
+                                    .sendMediaTransportCommand('play_pause'),
+                              ),
+                              const SizedBox(width: 22),
+
+                              // SIGUIENTE
+                              _CenteredMediaButton(
+                                icon: Icons.skip_next_rounded,
+                                tooltip: 'Siguiente',
+                                size: 68,
+                                iconSize: 36,
+                                accentColor: primary,
+                                inkColor: inkColor,
+                                onTap: () =>
+                                    notifier.sendMediaTransportCommand('next'),
+                              ),
+                              const SizedBox(width: 18),
+
+                              // REPEAT (Off -> Todo -> 1 Canción)
+                              _CenteredMediaButton(
+                                icon: state.repeatMode == MediaRepeatMode.one
+                                    ? Icons.repeat_one_rounded
+                                    : Icons.repeat_rounded,
+                                tooltip: switch (state.repeatMode) {
+                                  MediaRepeatMode.off => 'Repetir: Desactivado',
+                                  MediaRepeatMode.all => 'Repetir: Lista',
+                                  MediaRepeatMode.one => 'Repetir: 1 Canción',
+                                },
+                                size: 56,
+                                iconSize: 27,
+                                active: state.repeatMode != MediaRepeatMode.off,
+                                accentColor: primary,
+                                inkColor: inkColor,
+                                onTap: notifier.cycleRepeatMode,
+                              ),
+                            ],
                           ),
+                        ),
                       ],
                     ),
-
-                    const SizedBox(height: 18),
-
-                    // Título de la canción centrado
-                    Text(
-                      state.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: AppTheme.renaultSportHeaderStyle(
-                        fontSize: 28,
-                        color: inkColor,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-
-                    // Artista y álbum centrados
-                    Text(
-                      state.album.isNotEmpty
-                          ? '${state.artist}  •  ${state.album}'
-                          : state.artist,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: mutedInkColor,
-                      ),
-                    ),
-
-                    const SizedBox(height: 22),
-
-                    // Barra de progreso interactiva centrada
-                    SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        activeTrackColor: inkColor,
-                        inactiveTrackColor: inkColor.withValues(alpha: 0.22),
-                        thumbColor: primary,
-                        trackHeight: 6,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 8,
-                        ),
-                        overlayShape: const RoundSliderOverlayShape(
-                          overlayRadius: 15,
-                        ),
-                      ),
-                      child: Slider(
-                        value: state.progressRatio,
-                        min: 0.0,
-                        max: 1.0,
-                        onChanged: state.durationMs > 0
-                            ? (val) => notifier.seekToRatio(val)
-                            : null,
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            _formatMs(state.positionMs),
-                            style: AppTheme.telemetryNumericStyle(
-                              fontSize: 12,
-                              color: mutedInkColor,
-                            ),
-                          ),
-                          Text(
-                            _formatMs(state.durationMs),
-                            style: AppTheme.telemetryNumericStyle(
-                              fontSize: 12,
-                              color: mutedInkColor,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    // Controles Centrados: Random, Anterior, Play/Pausa, Siguiente, Repeat
-                    // Tamaños ampliados proporcionalmente para máxima comodidad al conducir
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          // RANDOM (SHUFFLE)
-                          _CenteredMediaButton(
-                            icon: Icons.shuffle_rounded,
-                            tooltip: 'Aleatorio (Random)',
-                            size: 56,
-                            iconSize: 27,
-                            active: state.shuffleEnabled,
-                            accentColor: primary,
-                            inkColor: inkColor,
-                            onTap: notifier.toggleShuffle,
-                          ),
-                          const SizedBox(width: 18),
-
-                          // ANTERIOR
-                          _CenteredMediaButton(
-                            icon: Icons.skip_previous_rounded,
-                            tooltip: 'Anterior',
-                            size: 68,
-                            iconSize: 36,
-                            accentColor: primary,
-                            inkColor: inkColor,
-                            onTap: () =>
-                                notifier.sendMediaTransportCommand('previous'),
-                          ),
-                          const SizedBox(width: 22),
-
-                          // PLAY / PAUSA
-                          _CenteredMediaButton(
-                            icon: state.isPlaying
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                            tooltip: state.isPlaying ? 'Pausar' : 'Reproducir',
-                            size: 88,
-                            iconSize: 48,
-                            isPrimaryFocal: true,
-                            accentColor: primary,
-                            inkColor: inkColor,
-                            onTap: () => notifier
-                                .sendMediaTransportCommand('play_pause'),
-                          ),
-                          const SizedBox(width: 22),
-
-                          // SIGUIENTE
-                          _CenteredMediaButton(
-                            icon: Icons.skip_next_rounded,
-                            tooltip: 'Siguiente',
-                            size: 68,
-                            iconSize: 36,
-                            accentColor: primary,
-                            inkColor: inkColor,
-                            onTap: () =>
-                                notifier.sendMediaTransportCommand('next'),
-                          ),
-                          const SizedBox(width: 18),
-
-                          // REPEAT (Off -> Todo -> 1 Canción)
-                          _CenteredMediaButton(
-                            icon: state.repeatMode == MediaRepeatMode.one
-                                ? Icons.repeat_one_rounded
-                                : Icons.repeat_rounded,
-                            tooltip: switch (state.repeatMode) {
-                              MediaRepeatMode.off => 'Repetir: Desactivado',
-                              MediaRepeatMode.all => 'Repetir: Lista',
-                              MediaRepeatMode.one => 'Repetir: 1 Canción',
-                            },
-                            size: 56,
-                            iconSize: 27,
-                            active: state.repeatMode != MediaRepeatMode.off,
-                            accentColor: primary,
-                            inkColor: inkColor,
-                            onTap: notifier.cycleRepeatMode,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
+              );
+            },
           ),
         ],
       ),
@@ -846,133 +856,161 @@ class _VolumeBarWithLeftAtt extends StatelessWidget {
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
     final pctInt = (state.volumePercent * 100).round();
+    final isPortrait =
+        MediaQuery.orientationOf(context) == Orientation.portrait;
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
-            // 1. Botón ATT al lado IZQUIERDO (-75% con 1 toque / restaurar con otro)
-            InkWell(
-              onTap: notifier.toggleAttenuation,
-              borderRadius: BorderRadius.circular(12),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  color: state.isAttenuated
-                      ? RenaultSportPalette.siriusLiquidYellow
-                      : RenaultSportPalette.siriusLiquidYellow
-                          .withValues(alpha: 0.14),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isCompact = isPortrait || constraints.maxWidth < 540;
+
+        return Card(
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: isCompact ? 10 : 16,
+              vertical: 10,
+            ),
+            child: Row(
+              children: [
+                // 1. Botón ATT al lado IZQUIERDO (-75% con 1 toque / restaurar con otro)
+                InkWell(
+                  onTap: notifier.toggleAttenuation,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: RenaultSportPalette.siriusLiquidYellow,
-                    width: 1.8,
-                  ),
-                  boxShadow: state.isAttenuated
-                      ? <BoxShadow>[
-                          BoxShadow(
-                            color: RenaultSportPalette.siriusLiquidYellow
-                                .withValues(alpha: 0.4),
-                            blurRadius: 10,
-                          ),
-                        ]
-                      : null,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.graphic_eq_rounded,
-                      size: 17,
-                      color: state.isAttenuated
-                          ? Colors.black
-                          : RenaultSportPalette.siriusLiquidYellow,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isCompact ? 10 : 16,
+                      vertical: isCompact ? 8 : 10,
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      state.isAttenuated ? 'ATT -75%' : 'ATT',
-                      style: AppTheme.renaultSportHeaderStyle(
-                        fontSize: 13,
-                        color: state.isAttenuated
-                            ? Colors.black
-                            : RenaultSportPalette.siriusLiquidYellow,
+                    decoration: BoxDecoration(
+                      color: state.isAttenuated
+                          ? RenaultSportPalette.siriusLiquidYellow
+                          : RenaultSportPalette.siriusLiquidYellow
+                              .withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: RenaultSportPalette.siriusLiquidYellow,
+                        width: 1.8,
+                      ),
+                      boxShadow: state.isAttenuated
+                          ? <BoxShadow>[
+                              BoxShadow(
+                                color: RenaultSportPalette.siriusLiquidYellow
+                                    .withValues(alpha: 0.4),
+                                blurRadius: 10,
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.graphic_eq_rounded,
+                          size: isCompact ? 15 : 17,
+                          color: state.isAttenuated
+                              ? Colors.black
+                              : RenaultSportPalette.siriusLiquidYellow,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          isCompact
+                              ? (state.isAttenuated ? '-75%' : 'ATT')
+                              : (state.isAttenuated ? 'ATT -75%' : 'ATT'),
+                          style: AppTheme.renaultSportHeaderStyle(
+                            fontSize: isCompact ? 12 : 13,
+                            color: state.isAttenuated
+                                ? Colors.black
+                                : RenaultSportPalette.siriusLiquidYellow,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                SizedBox(width: isCompact ? 4 : 12),
+
+                // 2. Botón Bajar Volumen (-)
+                IconButton(
+                  tooltip: 'Bajar Volumen',
+                  visualDensity: isCompact
+                      ? VisualDensity.compact
+                      : VisualDensity.standard,
+                  padding: EdgeInsets.all(isCompact ? 4 : 8),
+                  constraints: isCompact
+                      ? const BoxConstraints(minWidth: 34, minHeight: 34)
+                      : null,
+                  onPressed: () => notifier.adjustVolumeStep(-1),
+                  icon: const Icon(Icons.remove_circle_outline_rounded),
+                ),
+
+                // 3. Slider de Volumen Físico (silencioso, sin popup de sistema)
+                Expanded(
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 10,
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 12,
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(width: 12),
-
-            // 2. Botón Bajar Volumen (-)
-            IconButton(
-              tooltip: 'Bajar Volumen',
-              onPressed: () => notifier.adjustVolumeStep(-1),
-              icon: const Icon(Icons.remove_circle_outline_rounded),
-            ),
-
-            // 3. Slider de Volumen Físico de la Tablet (silencioso, sin popup de sistema)
-            Expanded(
-              child: SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  trackHeight: 10,
-                  thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 12,
+                    child: Slider(
+                      value: state.volumePercent,
+                      min: 0.0,
+                      max: 1.0,
+                      divisions: state.maxStep > 0 ? state.maxStep : 15,
+                      onChanged: (val) => notifier.setTabletVolume(val),
+                    ),
                   ),
                 ),
-                child: Slider(
-                  value: state.volumePercent,
-                  min: 0.0,
-                  max: 1.0,
-                  divisions: state.maxStep > 0 ? state.maxStep : 15,
-                  onChanged: (val) => notifier.setTabletVolume(val),
+
+                // 4. Botón Subir Volumen (+)
+                IconButton(
+                  tooltip: 'Subir Volumen',
+                  visualDensity: isCompact
+                      ? VisualDensity.compact
+                      : VisualDensity.standard,
+                  padding: EdgeInsets.all(isCompact ? 4 : 8),
+                  constraints: isCompact
+                      ? const BoxConstraints(minWidth: 34, minHeight: 34)
+                      : null,
+                  onPressed: () => notifier.adjustVolumeStep(1),
+                  icon: const Icon(Icons.add_circle_outline_rounded),
                 ),
-              ),
-            ),
 
-            // 4. Botón Subir Volumen (+)
-            IconButton(
-              tooltip: 'Subir Volumen',
-              onPressed: () => notifier.adjustVolumeStep(1),
-              icon: const Icon(Icons.add_circle_outline_rounded),
+                // 5. En vertical / pantallas compactas ocultamos % e icono para dar amplitud al slider
+                if (!isCompact) ...[
+                  const SizedBox(width: 6),
+                  Icon(
+                    state.isAttenuated
+                        ? Icons.volume_down_rounded
+                        : (pctInt == 0
+                            ? Icons.volume_off_rounded
+                            : Icons.volume_up_rounded),
+                    color: state.isAttenuated
+                        ? RenaultSportPalette.siriusLiquidYellow
+                        : primary,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 6),
+                  SizedBox(
+                    width: 46,
+                    child: Text(
+                      '$pctInt%',
+                      textAlign: TextAlign.right,
+                      style: AppTheme.telemetryNumericStyle(
+                        fontSize: 14.5,
+                        color: state.isAttenuated
+                            ? RenaultSportPalette.siriusLiquidYellow
+                            : primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
-
-            const SizedBox(width: 6),
-
-            // 5. Icono y Porcentaje a la derecha
-            Icon(
-              state.isAttenuated
-                  ? Icons.volume_down_rounded
-                  : (pctInt == 0
-                      ? Icons.volume_off_rounded
-                      : Icons.volume_up_rounded),
-              color: state.isAttenuated
-                  ? RenaultSportPalette.siriusLiquidYellow
-                  : primary,
-              size: 22,
-            ),
-            const SizedBox(width: 6),
-            SizedBox(
-              width: 46,
-              child: Text(
-                '$pctInt%',
-                textAlign: TextAlign.right,
-                style: AppTheme.telemetryNumericStyle(
-                  fontSize: 14.5,
-                  color: state.isAttenuated
-                      ? RenaultSportPalette.siriusLiquidYellow
-                      : primary,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }

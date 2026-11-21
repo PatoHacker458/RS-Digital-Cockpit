@@ -252,36 +252,42 @@ class PilotProfileScreen extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 8,
-                        alignment: WrapAlignment.spaceBetween,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.speed_rounded, color: primary),
-                              const SizedBox(width: 8),
-                              Text(
-                                'ODÓMETRO AUTOMÁTICO Y MANTENIMIENTO',
-                                style: AppTheme.renaultSportHeaderStyle(
-                                  fontSize: 15,
-                                  color: primary,
+                      SizedBox(
+                        width: double.infinity,
+                        child: Wrap(
+                          spacing: 10,
+                          runSpacing: 8,
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.speed_rounded, color: primary),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: Text(
+                                    'ODÓMETRO AUTOMÁTICO Y MANTENIMIENTO',
+                                    softWrap: true,
+                                    style: AppTheme.renaultSportHeaderStyle(
+                                      fontSize: 15,
+                                      color: primary,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ],
-                          ),
-                          OutlinedButton.icon(
-                            onPressed: () => _showSyncOdometerDialog(
-                              context,
-                              fcmNotifier,
-                              fcmTopics.vehicleOdometerKm,
+                              ],
                             ),
-                            icon: const Icon(Icons.edit_rounded, size: 16),
-                            label: const Text('AJUSTAR KM'),
-                          ),
-                        ],
+                            OutlinedButton.icon(
+                              onPressed: () => _showSyncOdometerDialog(
+                                context,
+                                fcmNotifier,
+                                fcmTopics.vehicleOdometerKm,
+                              ),
+                              icon: const Icon(Icons.edit_rounded, size: 16),
+                              label: const Text('AJUSTAR KM'),
+                            ),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 12),
 
@@ -297,22 +303,32 @@ class PilotProfileScreen extends ConsumerWidget {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'KILOMETRAJE DETECTADO (GPS + OBD2)',
-                                  style: TextStyle(fontSize: 10.5),
-                                ),
-                                Text(
-                                  '${fcmTopics.vehicleOdometerKm.toStringAsFixed(1)} KM',
-                                  style: AppTheme.digitalDisplayStyle(
-                                    fontSize: 26,
-                                    color: RenaultSportPalette.oemShiftGreen,
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'KILOMETRAJE DETECTADO (GPS + OBD2)',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(fontSize: 10.5),
                                   ),
-                                ),
-                              ],
+                                  FittedBox(
+                                    fit: BoxFit.scaleDown,
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      '${fcmTopics.vehicleOdometerKm.toStringAsFixed(1)} KM',
+                                      style: AppTheme.digitalDisplayStyle(
+                                        fontSize: 26,
+                                        color:
+                                            RenaultSportPalette.oemShiftGreen,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
+                            const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 10,
@@ -523,6 +539,10 @@ class _ServiceMileageRow extends StatelessWidget {
                 ),
               ),
               TextButton(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed: onMarkDone,
                 child: const Text('REGISTRAR HECHO'),
               ),

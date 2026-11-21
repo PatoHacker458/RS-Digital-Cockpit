@@ -29,6 +29,7 @@ class CockpitDashboardScreen extends ConsumerWidget {
     final frame = telemetryAsync.valueOrNull ??
         ObdTelemetryFrame.initial(isSimulator: false);
     final activeTab = ref.watch(cockpitTabProvider);
+    ref.watch(blackboxRealtimeProvider);
 
     return Scaffold(
       body: SafeArea(
@@ -231,18 +232,73 @@ class _CockpitTopHeaderBar extends ConsumerWidget {
 
                 const SizedBox(width: 6),
 
-                // Tema Oscuro / Claro
-                IconButton(
-                  visualDensity: VisualDensity.compact,
-                  tooltip: 'Cambiar Tema',
-                  onPressed: () =>
-                      ref.read(themeModeProvider.notifier).toggleTheme(),
-                  icon: Icon(
-                    themeMode == ThemeMode.dark
-                        ? Icons.wb_sunny_rounded
-                        : Icons.nightlight_round,
-                    size: 19,
-                    color: primary,
+                // Selector de Tema: Auto (Android) / Oscuro / Claro
+                PopupMenuButton<ThemeMode>(
+                  tooltip: 'Cambiar Tema (Auto / Oscuro / Claro)',
+                  initialValue: themeMode,
+                  onSelected: (mode) =>
+                      ref.read(themeModeProvider.notifier).setThemeMode(mode),
+                  itemBuilder: (context) => [
+                    PopupMenuItem<ThemeMode>(
+                      value: ThemeMode.system,
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.brightness_auto_rounded,
+                            size: 18,
+                            color: primary,
+                          ),
+                          const SizedBox(width: 10),
+                          const Expanded(child: Text('Auto (Android)')),
+                          if (themeMode == ThemeMode.system)
+                            Icon(Icons.check_rounded, size: 17, color: primary),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem<ThemeMode>(
+                      value: ThemeMode.dark,
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.nightlight_round,
+                            size: 18,
+                            color: primary,
+                          ),
+                          const SizedBox(width: 10),
+                          const Expanded(child: Text('Oscuro (Night Stage)')),
+                          if (themeMode == ThemeMode.dark)
+                            Icon(Icons.check_rounded, size: 17, color: primary),
+                        ],
+                      ),
+                    ),
+                    PopupMenuItem<ThemeMode>(
+                      value: ThemeMode.light,
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.wb_sunny_rounded,
+                            size: 18,
+                            color: primary,
+                          ),
+                          const SizedBox(width: 10),
+                          const Expanded(child: Text('Claro (Daylight Cup)')),
+                          if (themeMode == ThemeMode.light)
+                            Icon(Icons.check_rounded, size: 17, color: primary),
+                        ],
+                      ),
+                    ),
+                  ],
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Icon(
+                      switch (themeMode) {
+                        ThemeMode.system => Icons.brightness_auto_rounded,
+                        ThemeMode.dark => Icons.nightlight_round,
+                        ThemeMode.light => Icons.wb_sunny_rounded,
+                      },
+                      size: 20,
+                      color: primary,
+                    ),
                   ),
                 ),
 
@@ -345,14 +401,17 @@ class _CompactScrollableCockpitView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tachHeight =
+        (MediaQuery.sizeOf(context).width - 20).clamp(320.0, 380.0);
+
     return SingleChildScrollView(
       child: Column(
         children: [
           SizedBox(
-            height: 310,
+            height: tachHeight,
             child: Card(
               child: Padding(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.all(10),
                 child: RenaultSportTachometerWidget(frame: frame),
               ),
             ),
@@ -613,7 +672,12 @@ class _Sirius34TelemetryColumn extends ConsumerWidget {
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                       ),
-                      onPressed: () => _openBlackboxHistorySheet(context),
+                      onPressed: () {
+                        ref
+                            .read(blackboxRealtimeProvider.notifier)
+                            .refreshFromCloud();
+                        _openBlackboxHistorySheet(context);
+                      },
                       icon: const Icon(Icons.history_rounded, size: 15),
                       label: const FittedBox(
                         fit: BoxFit.scaleDown,
@@ -666,6 +730,7 @@ class _BlackboxSessionsModalSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final sessions = ref.watch(blackboxRealtimeProvider);
+    final syncMeta = ref.watch(blackboxSyncMetaProvider);
     final notifier = ref.read(blackboxRealtimeProvider.notifier);
     final primary = Theme.of(context).colorScheme.primary;
 
@@ -683,29 +748,46 @@ class _BlackboxSessionsModalSheet extends ConsumerWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.cloud_done_rounded,
-                        color: RenaultSportPalette.siriusLiquidYellow,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'HISTORIAL BLACKBOX CLOUD (${sessions.length})',
-                        style: AppTheme.renaultSportHeaderStyle(
-                          fontSize: 16,
-                          color: primary,
+                  Expanded(
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.cloud_done_rounded,
+                          color: RenaultSportPalette.siriusLiquidYellow,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            'HISTORIAL BLACKBOX CLOUD (${sessions.length})',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppTheme.renaultSportHeaderStyle(
+                              fontSize: 16,
+                              color: primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       IconButton(
                         tooltip: 'Sincronizar desde Firebase',
-                        onPressed: notifier.refreshFromCloud,
-                        icon: const Icon(Icons.refresh_rounded),
+                        onPressed: syncMeta.isSyncing
+                            ? null
+                            : notifier.refreshFromCloud,
+                        icon: syncMeta.isSyncing
+                            ? SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: primary,
+                                ),
+                              )
+                            : const Icon(Icons.refresh_rounded),
                       ),
                       IconButton(
                         onPressed: () => Navigator.of(context).pop(),
@@ -716,9 +798,21 @@ class _BlackboxSessionsModalSheet extends ConsumerWidget {
                 ],
               ),
               const Text(
-                'Cada sesión guarda los valores máximos registrados en tu recorrido (RPM pico, velocidad máxima, temperatura máxima y códigos DTC).',
+                'Cada sesión guarda los valores máximos registrados en tu recorrido (RPM pico, velocidad máxima, temperatura máxima y códigos DTC). Se sincroniza automáticamente entre tus dispositivos.',
                 style: TextStyle(fontSize: 12),
               ),
+              if (syncMeta.errorMessage != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  syncMeta.errorMessage!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: RenaultSportPalette.coldEngineAmber,
+                  ),
+                ),
+              ],
               const Divider(height: 18),
               Expanded(
                 child: sessions.isEmpty

@@ -1,8 +1,10 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/theme_provider.dart';
+import '../../../firebase_options.dart';
 import '../../auth_profile/providers/auth_profile_providers.dart';
 import '../../sensors/biometric_immobilizer_service.dart';
 import '../models/garage_models.dart';
@@ -341,16 +343,22 @@ class DigitalGaragePaymentNotifier extends Notifier<DigitalGaragePaymentState> {
     final uid = pilot?.uid ?? 'pilot-rs172';
 
     try {
-      final dbRef = FirebaseDatabase.instance.ref('garage_orders/$uid/$orderId');
-      await dbRef.set(<String, dynamic>{
-        'orderId': orderId,
-        'description': description,
-        'amountMxn': amountMxn,
-        'cardLast4': last4,
-        'luhnVerified': true,
-        'biometricVerified': true,
-        'createdAt': DateTime.now().toIso8601String(),
-      }).timeout(const Duration(seconds: 2));
+      if (Firebase.apps.isNotEmpty) {
+        final db = FirebaseDatabase.instanceFor(
+          app: Firebase.app(),
+          databaseURL: DefaultFirebaseOptions.android.databaseURL,
+        );
+        final dbRef = db.ref('garage_orders/$uid/$orderId');
+        await dbRef.set(<String, dynamic>{
+          'orderId': orderId,
+          'description': description,
+          'amountMxn': amountMxn,
+          'cardLast4': last4,
+          'luhnVerified': true,
+          'biometricVerified': true,
+          'createdAt': DateTime.now().toIso8601String(),
+        }).timeout(const Duration(seconds: 4));
+      }
     } catch (_) {}
 
     return GarageOrderReceipt(

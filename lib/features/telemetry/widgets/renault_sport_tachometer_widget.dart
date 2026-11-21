@@ -6,7 +6,7 @@ import '../../../core/theme/theme_provider.dart';
 import '../models/obd_telemetry_frame.dart';
 
 /// Tacómetro Radial Sagem 0-8000 RPM (`CustomPainter` + `ShaderMask`)
-/// 100% responsivo (sin desbordamientos en tablet ni teléfono).
+/// 100% responsivo (sin encimamientos ni desbordamientos en tablet ni teléfono).
 class RenaultSportTachometerWidget extends ConsumerWidget {
   final ObdTelemetryFrame frame;
 
@@ -26,7 +26,7 @@ class RenaultSportTachometerWidget extends ConsumerWidget {
         final availableHeight = constraints.maxHeight;
         final showLedBar = availableHeight > 180;
         final dialAreaHeight =
-            showLedBar ? math.max(120.0, availableHeight - 38.0) : availableHeight;
+            showLedBar ? math.max(120.0, availableHeight - 34.0) : availableHeight;
         final size = math.min(constraints.maxWidth, dialAreaHeight);
 
         return TweenAnimationBuilder<double>(
@@ -35,6 +35,10 @@ class RenaultSportTachometerWidget extends ConsumerWidget {
           curve: Curves.easeOutCubic,
           builder: (context, smoothRpm, _) {
             final smoothedFrame = frame.copyWith(rpm: smoothRpm);
+            final gearText = smoothedFrame.estimatedGear == 0
+                ? 'N'
+                : '${smoothedFrame.estimatedGear}';
+
             return Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -98,16 +102,102 @@ class RenaultSportTachometerWidget extends ConsumerWidget {
                               flashPhase: flashPhase,
                             ),
                           ),
+
+                          // Zona superior libre (arriba del eje, abajo del número 4)
                           Positioned(
-                            bottom: size * 0.11,
-                            width: size * 0.68,
+                            top: size * 0.27,
+                            width: size * 0.44,
+                            height: size * 0.095,
                             child: FittedBox(
                               fit: BoxFit.scaleDown,
-                              child: _CenterDigitalClusterReadout(
+                              child: _EngineThermalStatusBadge(
                                 frame: smoothedFrame,
-                                skin: skin,
                                 isDark: isDark,
-                                flashPhase: flashPhase,
+                              ),
+                            ),
+                          ),
+
+                          // Zona inferior media (entre eje y la base, despejada de dígitos 0 y 8)
+                          Positioned(
+                            bottom: size * 0.17,
+                            width: size * 0.40,
+                            height: size * 0.17,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.baseline,
+                                textBaseline: TextBaseline.alphabetic,
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 9,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: skin.primaryDialColor
+                                          .withValues(alpha: 0.18),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: skin.primaryDialColor,
+                                        width: 1.4,
+                                      ),
+                                    ),
+                                    child: Text(
+                                      gearText,
+                                      style: AppTheme.digitalDisplayStyle(
+                                        fontSize: 26,
+                                        color: skin.primaryDialColor,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Text(
+                                    '${smoothedFrame.speedKmh}',
+                                    style: AppTheme.digitalDisplayStyle(
+                                      fontSize: 34,
+                                      color: isDark
+                                          ? Colors.white
+                                          : const Color(0xFF0F172A),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'KM/H',
+                                    style: AppTheme.telemetryNumericStyle(
+                                      fontSize: 11,
+                                      color: isDark
+                                          ? Colors.white54
+                                          : Colors.black54,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                          // Zona inferior abierta del dial: RPM digitales
+                          Positioned(
+                            bottom: size * 0.06,
+                            width: size * 0.50,
+                            height: size * 0.095,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                '${smoothedFrame.rpm.round()} RPM',
+                                style: AppTheme.telemetryNumericStyle(
+                                  fontSize: 16,
+                                  color: smoothedFrame.shiftLightStage ==
+                                          ShiftLightStage.optimalGreenShift
+                                      ? RenaultSportPalette.oemShiftGreen
+                                      : smoothedFrame.shiftLightStage ==
+                                                  ShiftLightStage
+                                                      .fuelCutLimiterFlash &&
+                                              flashPhase
+                                          ? RenaultSportPalette.revLimiterRed
+                                          : skin.primaryDialColor,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
                             ),
                           ),
@@ -121,6 +211,53 @@ class RenaultSportTachometerWidget extends ConsumerWidget {
           },
         );
       },
+    );
+  }
+}
+
+class _EngineThermalStatusBadge extends StatelessWidget {
+  final ObdTelemetryFrame frame;
+  final bool isDark;
+
+  const _EngineThermalStatusBadge({
+    required this.frame,
+    required this.isDark,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: frame.isEngineCold
+            ? RenaultSportPalette.coldEngineAmber.withValues(alpha: 0.18)
+            : frame.vvtDephaserActive
+                ? RenaultSportPalette.oemShiftGreen.withValues(alpha: 0.20)
+                : (isDark ? Colors.black26 : Colors.black12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: frame.isEngineCold
+              ? RenaultSportPalette.coldEngineAmber
+              : frame.vvtDephaserActive
+                  ? RenaultSportPalette.oemShiftGreen
+                  : (isDark ? Colors.white24 : Colors.black26),
+        ),
+      ),
+      child: Text(
+        frame.isEngineCold
+            ? 'COLD <75°C (5K MAX)'
+            : frame.vvtDephaserActive
+                ? 'VVT ON'
+                : 'WARM MAP',
+        style: AppTheme.telemetryNumericStyle(
+          fontSize: 10,
+          color: frame.isEngineCold
+              ? RenaultSportPalette.coldEngineAmber
+              : frame.vvtDephaserActive
+                  ? RenaultSportPalette.oemShiftGreen
+                  : (isDark ? Colors.white70 : Colors.black87),
+        ),
+      ),
     );
   }
 }
@@ -206,9 +343,10 @@ class _SagemBezelShaderRingPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = (math.min(size.width, size.height) / 2) - 3;
+    final scale = (radius / 150.0).clamp(0.55, 1.35);
     final ringPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 5.0
+      ..strokeWidth = 4.6 * scale
       ..color = Colors.white;
     canvas.drawCircle(center, radius, ringPaint);
   }
@@ -252,6 +390,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
     final radius = (math.min(size.width, size.height) / 2) - 8;
+    final scale = (radius / 150.0).clamp(0.55, 1.35);
 
     final dialBgPaint = Paint()
       ..shader = RadialGradient(
@@ -267,11 +406,11 @@ class _RenaultSportTachometerPainter extends CustomPainter {
       ).createShader(Rect.fromCircle(center: center, radius: radius));
     canvas.drawCircle(center, radius, dialBgPaint);
 
-    final arcRect = Rect.fromCircle(center: center, radius: radius * 0.86);
+    final arcRect = Rect.fromCircle(center: center, radius: radius * 0.87);
 
     final baseTrackPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 12.0
+      ..strokeWidth = 11.0 * scale
       ..strokeCap = StrokeCap.butt
       ..color = isDark ? const Color(0xFF252A34) : const Color(0xFFCBD5E1);
     canvas.drawArc(arcRect, _startAngle, _sweepAngle, false, baseTrackPaint);
@@ -286,7 +425,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
         false,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 12.0
+          ..strokeWidth = 11.0 * scale
           ..color = RenaultSportPalette.coldEngineAmber,
       );
 
@@ -299,20 +438,20 @@ class _RenaultSportTachometerPainter extends CustomPainter {
         false,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 12.0
+          ..strokeWidth = 11.0 * scale
           ..color = RenaultSportPalette.revLimiterRed,
       );
     } else {
       final vvtStart = _rpmToAngle(5150.0);
       final vvtSweep = _rpmToAngle(6750.0) - vvtStart;
       canvas.drawArc(
-        Rect.fromCircle(center: center, radius: radius * 0.78),
+        Rect.fromCircle(center: center, radius: radius * 0.79),
         vvtStart,
         vvtSweep,
         false,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 5.0
+          ..strokeWidth = 4.5 * scale
           ..color = skin.primaryDialColor.withValues(alpha: 0.45),
       );
 
@@ -325,7 +464,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
         false,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 12.0
+          ..strokeWidth = 11.0 * scale
           ..color = RenaultSportPalette.oemShiftGreen,
       );
 
@@ -338,7 +477,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
         false,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 12.0
+          ..strokeWidth = 11.0 * scale
           ..color = RenaultSportPalette.revLimiterRed,
       );
     }
@@ -346,7 +485,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
     final activeSweep = _rpmToAngle(rpm) - _startAngle;
     final activeArcPaint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 7.0
+      ..strokeWidth = 6.5 * scale
       ..strokeCap = StrokeCap.round
       ..color = shiftStage == ShiftLightStage.fuelCutLimiterFlash
           ? RenaultSportPalette.revLimiterRed
@@ -367,8 +506,9 @@ class _RenaultSportTachometerPainter extends CustomPainter {
       final isMajor = i % 4 == 0;
       final isHalf = i % 2 == 0 && !isMajor;
 
-      final outerR = radius * 0.84;
-      final innerR = outerR - (isMajor ? 14.0 : (isHalf ? 9.0 : 5.0));
+      final outerR = radius * 0.85;
+      final innerR =
+          outerR - (isMajor ? 12.0 * scale : (isHalf ? 7.5 * scale : 4.2 * scale));
 
       final p1 = Offset(
         center.dx + outerR * math.cos(angle),
@@ -386,7 +526,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
         p1,
         p2,
         Paint()
-          ..strokeWidth = isMajor ? 2.8 : 1.4
+          ..strokeWidth = (isMajor ? 2.6 : 1.3) * scale
           ..color = isRedZoneTick
               ? RenaultSportPalette.revLimiterRed
               : (isDark ? const Color(0xFFF3F4F6) : const Color(0xFF0F172A)),
@@ -394,7 +534,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
 
       if (isMajor) {
         final numberVal = (tickRpm ~/ 1000).toString();
-        final textRadius = radius * 0.67;
+        final textRadius = radius * 0.70;
         final textOffset = Offset(
           center.dx + textRadius * math.cos(angle),
           center.dy + textRadius * math.sin(angle),
@@ -404,7 +544,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
           text: TextSpan(
             text: numberVal,
             style: AppTheme.telemetryNumericStyle(
-              fontSize: radius * 0.11,
+              fontSize: radius * 0.105,
               color: isRedZoneTick
                   ? RenaultSportPalette.revLimiterRed
                   : (isDark ? skin.primaryDialColor : RenaultSportPalette.mondialBlue),
@@ -423,7 +563,8 @@ class _RenaultSportTachometerPainter extends CustomPainter {
 
     _drawOemGearshiftLightIcon(
       canvas: canvas,
-      center: Offset(center.dx + radius * 0.36, center.dy + radius * 0.16),
+      center: Offset(center.dx + radius * 0.34, center.dy - radius * 0.04),
+      scale: scale,
       stage: shiftStage,
       flashPhase: flashPhase,
     );
@@ -446,7 +587,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
       tip.translate(2, 4),
       Paint()
         ..color = Colors.black.withValues(alpha: 0.55)
-        ..strokeWidth = 5.0
+        ..strokeWidth = 4.6 * scale
         ..strokeCap = StrokeCap.round
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4),
     );
@@ -458,17 +599,18 @@ class _RenaultSportTachometerPainter extends CustomPainter {
         ..color = shiftStage == ShiftLightStage.optimalGreenShift
             ? RenaultSportPalette.oemShiftGreen
             : skin.needleColor
-        ..strokeWidth = 4.2
+        ..strokeWidth = 3.8 * scale
         ..strokeCap = StrokeCap.round,
     );
 
-    canvas.drawCircle(center, radius * 0.085, Paint()..color = const Color(0xFF262B35));
-    canvas.drawCircle(center, radius * 0.04, Paint()..color = skin.primaryDialColor);
+    canvas.drawCircle(center, radius * 0.08, Paint()..color = const Color(0xFF262B35));
+    canvas.drawCircle(center, radius * 0.038, Paint()..color = skin.primaryDialColor);
   }
 
   void _drawOemGearshiftLightIcon({
     required Canvas canvas,
     required Offset center,
+    required double scale,
     required ShiftLightStage stage,
     required bool flashPhase,
   }) {
@@ -494,7 +636,7 @@ class _RenaultSportTachometerPainter extends CustomPainter {
     if (glowing) {
       canvas.drawCircle(
         center,
-        18,
+        16 * scale,
         Paint()
           ..color = iconColor.withValues(alpha: 0.28)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
@@ -504,13 +646,25 @@ class _RenaultSportTachometerPainter extends CustomPainter {
     final paint = Paint()
       ..color = iconColor
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.2
+      ..strokeWidth = 2.0 * scale
       ..strokeCap = StrokeCap.round;
 
-    canvas.drawCircle(Offset(center.dx, center.dy - 7), 4.0, Paint()..color = iconColor);
-    canvas.drawLine(Offset(center.dx, center.dy - 3), Offset(center.dx - 3, center.dy + 8), paint);
+    canvas.drawCircle(
+      Offset(center.dx, center.dy - 6.5 * scale),
+      3.6 * scale,
+      Paint()..color = iconColor,
+    );
+    canvas.drawLine(
+      Offset(center.dx, center.dy - 2.8 * scale),
+      Offset(center.dx - 2.8 * scale, center.dy + 7.2 * scale),
+      paint,
+    );
     canvas.drawArc(
-      Rect.fromCenter(center: Offset(center.dx, center.dy + 9), width: 16, height: 7),
+      Rect.fromCenter(
+        center: Offset(center.dx, center.dy + 8.2 * scale),
+        width: 14 * scale,
+        height: 6.4 * scale,
+      ),
       0,
       math.pi,
       false,
@@ -518,11 +672,11 @@ class _RenaultSportTachometerPainter extends CustomPainter {
     );
 
     final arrowPath = Path()
-      ..moveTo(center.dx + 8, center.dy + 3)
-      ..lineTo(center.dx + 8, center.dy - 8)
-      ..moveTo(center.dx + 5, center.dy - 5)
-      ..lineTo(center.dx + 8, center.dy - 8)
-      ..lineTo(center.dx + 11, center.dy - 5);
+      ..moveTo(center.dx + 7.2 * scale, center.dy + 2.8 * scale)
+      ..lineTo(center.dx + 7.2 * scale, center.dy - 7.2 * scale)
+      ..moveTo(center.dx + 4.5 * scale, center.dy - 4.5 * scale)
+      ..lineTo(center.dx + 7.2 * scale, center.dy - 7.2 * scale)
+      ..lineTo(center.dx + 9.9 * scale, center.dy - 4.5 * scale);
     canvas.drawPath(arrowPath, paint);
   }
 
@@ -535,113 +689,5 @@ class _RenaultSportTachometerPainter extends CustomPainter {
         oldDelegate.skin != skin ||
         oldDelegate.isDark != isDark ||
         oldDelegate.flashPhase != flashPhase;
-  }
-}
-
-class _CenterDigitalClusterReadout extends StatelessWidget {
-  final ObdTelemetryFrame frame;
-  final ClusterSkinEdition skin;
-  final bool isDark;
-  final bool flashPhase;
-
-  const _CenterDigitalClusterReadout({
-    required this.frame,
-    required this.skin,
-    required this.isDark,
-    required this.flashPhase,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final gearText = frame.estimatedGear == 0 ? 'N' : '${frame.estimatedGear}';
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-          decoration: BoxDecoration(
-            color: frame.isEngineCold
-                ? RenaultSportPalette.coldEngineAmber.withValues(alpha: 0.18)
-                : frame.vvtDephaserActive
-                    ? RenaultSportPalette.oemShiftGreen.withValues(alpha: 0.20)
-                    : Colors.black26,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: frame.isEngineCold
-                  ? RenaultSportPalette.coldEngineAmber
-                  : frame.vvtDephaserActive
-                      ? RenaultSportPalette.oemShiftGreen
-                      : Colors.white24,
-            ),
-          ),
-          child: Text(
-            frame.isEngineCold
-                ? 'COLD <75°C (5K MAX)'
-                : frame.vvtDephaserActive
-                    ? 'VVT ON'
-                    : 'WARM MAP',
-            style: AppTheme.telemetryNumericStyle(
-              fontSize: 10,
-              color: frame.isEngineCold
-                  ? RenaultSportPalette.coldEngineAmber
-                  : frame.vvtDephaserActive
-                      ? RenaultSportPalette.oemShiftGreen
-                      : (isDark ? Colors.white70 : Colors.black87),
-            ),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 2),
-              decoration: BoxDecoration(
-                color: skin.primaryDialColor.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: skin.primaryDialColor, width: 1.4),
-              ),
-              child: Text(
-                gearText,
-                style: AppTheme.digitalDisplayStyle(
-                  fontSize: 26,
-                  color: skin.primaryDialColor,
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              '${frame.speedKmh}',
-              style: AppTheme.digitalDisplayStyle(
-                fontSize: 34,
-                color: isDark ? Colors.white : const Color(0xFF0F172A),
-              ),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              'KM/H',
-              style: AppTheme.telemetryNumericStyle(
-                fontSize: 11,
-                color: isDark ? Colors.white54 : Colors.black54,
-              ),
-            ),
-          ],
-        ),
-        Text(
-          '${frame.rpm.round()} RPM',
-          style: AppTheme.telemetryNumericStyle(
-            fontSize: 16,
-            color: frame.shiftLightStage == ShiftLightStage.optimalGreenShift
-                ? RenaultSportPalette.oemShiftGreen
-                : frame.shiftLightStage == ShiftLightStage.fuelCutLimiterFlash && flashPhase
-                    ? RenaultSportPalette.revLimiterRed
-                    : skin.primaryDialColor,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-      ],
-    );
   }
 }

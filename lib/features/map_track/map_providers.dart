@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../../firebase_options.dart';
 import '../auth_profile/providers/auth_profile_providers.dart';
 import '../cloud_sync_fcm/fcm_notification_service.dart';
 
@@ -69,18 +71,38 @@ class TrackLapEntry {
       };
 }
 
-/// Estado inmutable de Ubicación GPS en Tiempo Real, Filtros Cercanos y Cronómetro de Laps
+class _OsrmRouteResult {
+  final List<LatLng> points;
+  final double distanceMeters;
+  final double durationSeconds;
+
+  const _OsrmRouteResult({
+    required this.points,
+    required this.distanceMeters,
+    required this.durationSeconds,
+  });
+}
+
+/// Estado inmutable de Ubicación GPS en Tiempo Real, Filtros Cercanos,
+/// Navegación al destino seleccionado y Cronómetro de Laps.
 class TrackMapTelemetryState {
   final LatLng currentGpsPosition;
   final bool hasRealGpsFix;
+  final double currentHeading;
+  final double currentSpeedMps;
   final String currentStreetName;
   final List<LatLng> routePolylinePoints;
 
-  // Filtros de lugares cercanos
+  // Filtros de lugares cercanos y ruta calculada
   final TrackMapFilter? activeFilter;
   final bool isLoadingPlaces;
   final List<NearbyMapPlace> nearbyPlaces;
   final NearbyMapPlace? selectedPlace;
+  final List<LatLng> navigationRoutePoints;
+  final double? navigationDistanceMeters;
+  final double? navigationDurationSec;
+  final bool isCalculatingRoute;
+  final bool isDirectFallbackRoute;
 
   // Cronómetro funcional de vueltas (Start / Finish GPS)
   final LatLng? startFinishPoint;
@@ -95,12 +117,19 @@ class TrackMapTelemetryState {
   const TrackMapTelemetryState({
     required this.currentGpsPosition,
     this.hasRealGpsFix = false,
+    this.currentHeading = 0.0,
+    this.currentSpeedMps = 0.0,
     this.currentStreetName = 'Buscando señal GPS...',
     this.routePolylinePoints = const <LatLng>[],
     this.activeFilter,
     this.isLoadingPlaces = false,
     this.nearbyPlaces = const <NearbyMapPlace>[],
     this.selectedPlace,
+    this.navigationRoutePoints = const <LatLng>[],
+    this.navigationDistanceMeters,
+    this.navigationDurationSec,
+    this.isCalculatingRoute = false,
+    this.isDirectFallbackRoute = false,
     this.startFinishPoint,
     this.startStreetName = '',
     this.isLapSessionActive = false,
@@ -121,6 +150,8 @@ class TrackMapTelemetryState {
   TrackMapTelemetryState copyWith({
     LatLng? currentGpsPosition,
     bool? hasRealGpsFix,
+    double? currentHeading,
+    double? currentSpeedMps,
     String? currentStreetName,
     List<LatLng>? routePolylinePoints,
     TrackMapFilter? activeFilter,
@@ -129,6 +160,12 @@ class TrackMapTelemetryState {
     List<NearbyMapPlace>? nearbyPlaces,
     NearbyMapPlace? selectedPlace,
     bool clearSelectedPlace = false,
+    List<LatLng>? navigationRoutePoints,
+    double? navigationDistanceMeters,
+    double? navigationDurationSec,
+    bool? isCalculatingRoute,
+    bool? isDirectFallbackRoute,
+    bool clearNavigationRoute = false,
     LatLng? startFinishPoint,
     bool clearStartFinishPoint = false,
     String? startStreetName,
@@ -143,6 +180,8 @@ class TrackMapTelemetryState {
     return TrackMapTelemetryState(
       currentGpsPosition: currentGpsPosition ?? this.currentGpsPosition,
       hasRealGpsFix: hasRealGpsFix ?? this.hasRealGpsFix,
+      currentHeading: currentHeading ?? this.currentHeading,
+      currentSpeedMps: currentSpeedMps ?? this.currentSpeedMps,
       currentStreetName: currentStreetName ?? this.currentStreetName,
       routePolylinePoints: routePolylinePoints ?? this.routePolylinePoints,
       activeFilter: clearFilter ? null : (activeFilter ?? this.activeFilter),
@@ -151,6 +190,21 @@ class TrackMapTelemetryState {
       selectedPlace: clearSelectedPlace
           ? null
           : (selectedPlace ?? this.selectedPlace),
+      navigationRoutePoints: clearNavigationRoute
+          ? const <LatLng>[]
+          : (navigationRoutePoints ?? this.navigationRoutePoints),
+      navigationDistanceMeters: clearNavigationRoute
+          ? null
+          : (navigationDistanceMeters ?? this.navigationDistanceMeters),
+      navigationDurationSec: clearNavigationRoute
+          ? null
+          : (navigationDurationSec ?? this.navigationDurationSec),
+      isCalculatingRoute: clearNavigationRoute
+          ? false
+          : (isCalculatingRoute ?? this.isCalculatingRoute),
+      isDirectFallbackRoute: clearNavigationRoute
+          ? false
+          : (isDirectFallbackRoute ?? this.isDirectFallbackRoute),
       startFinishPoint: clearStartFinishPoint
           ? null
           : (startFinishPoint ?? this.startFinishPoint),
@@ -168,8 +222,8 @@ class TrackMapTelemetryState {
   }
 }
 
-/// Notifier 100% Riverpod para GPS Real, Lugares Cercanos (Talleres, Gasolineras, Estacionamientos)
-/// y Cronómetro Automático de Laps con sincronización a Firebase nombrada por la calle de partida.
+/// Notifier 100% Riverpod para GPS Real fluido (estilo videojuego), Lugares Cercanos,
+/// Ruta Calculada (OSRM) y Cronómetro Automático de Laps con sincronización a Firebase.
 class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
   static const MethodChannel _launcherChannel =
       MethodChannel('com.renaultsport.clio172/launcher');
@@ -180,6 +234,7 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
   static const double _minLapDurationSec = 8.0;
 
   StreamSubscription<Position>? _gpsSubscription;
+  bool _isStartingGps = false;
   Timer? _lapStopwatchTimer;
   DateTime? _currentLapStartedAt;
   DateTime _lastGeocodeAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -194,6 +249,7 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
     _startRealGpsStream();
     ref.onDispose(() {
       _gpsSubscription?.cancel();
+      _gpsSubscription = null;
       _lapStopwatchTimer?.cancel();
     });
     return const TrackMapTelemetryState(
@@ -201,15 +257,27 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
     );
   }
 
+  void ensureGpsTrackingActive() {
+    if (_gpsSubscription == null && !_isStartingGps) {
+      _startRealGpsStream();
+    }
+  }
+
   void attachMiniMapController(GoogleMapController controller) {
     _miniMapController = controller;
+    ensureGpsTrackingActive();
     if (state.hasRealGpsFix) {
-      _animateMapTo(_miniMapController, state.currentGpsPosition, zoom: 16.0);
+      _followMiniMapCamera(
+        state.currentGpsPosition,
+        bearing: state.currentHeading,
+        instant: true,
+      );
     }
   }
 
   void attachFullTrackMapController(GoogleMapController controller) {
     _fullTrackMapController = controller;
+    ensureGpsTrackingActive();
     if (state.hasRealGpsFix) {
       _animateMapTo(_fullTrackMapController, state.currentGpsPosition,
           zoom: 15.6);
@@ -217,9 +285,34 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
   }
 
   void centerCameraOnCurrentLocation() {
-    _animateMapTo(_miniMapController, state.currentGpsPosition, zoom: 16.2);
+    _followMiniMapCamera(
+      state.currentGpsPosition,
+      bearing: state.currentHeading,
+    );
     _animateMapTo(_fullTrackMapController, state.currentGpsPosition,
         zoom: 15.8);
+  }
+
+  void _followMiniMapCamera(
+    LatLng target, {
+    double bearing = 0.0,
+    bool instant = false,
+  }) {
+    final controller = _miniMapController;
+    if (controller == null) return;
+    try {
+      final cam = CameraPosition(
+        target: target,
+        zoom: 17.2,
+        bearing: bearing,
+        tilt: 35.0,
+      );
+      if (instant) {
+        controller.moveCamera(CameraUpdate.newCameraPosition(cam));
+      } else {
+        controller.animateCamera(CameraUpdate.newCameraPosition(cam));
+      }
+    } catch (_) {}
   }
 
   void _animateMapTo(
@@ -238,10 +331,12 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
   }
 
   Future<void> _startRealGpsStream() async {
+    if (_isStartingGps) return;
+    _isStartingGps = true;
     try {
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        state = state.copyWith(currentStreetName: 'Activa el GPS de la tablet');
+        state = state.copyWith(currentStreetName: 'Activa el GPS del dispositivo');
         return;
       }
 
@@ -271,22 +366,46 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
         _handleNewGpsPosition(currentPos, isInitialFix: !state.hasRealGpsFix);
       } catch (_) {}
 
-      // 2. Suscribirse al stream GPS de alta precisión en tiempo real
+      // 2. Suscribirse al stream GPS de alta frecuencia (~400 ms en Android)
+      final LocationSettings streamSettings = Platform.isAndroid
+          ? AndroidSettings(
+              accuracy: LocationAccuracy.bestForNavigation,
+              distanceFilter: 0,
+              intervalDuration: const Duration(milliseconds: 400),
+            )
+          : const LocationSettings(
+              accuracy: LocationAccuracy.bestForNavigation,
+              distanceFilter: 1,
+            );
+
+      await _gpsSubscription?.cancel();
       _gpsSubscription = Geolocator.getPositionStream(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 2,
-        ),
-      ).listen((Position pos) {
-        _handleNewGpsPosition(pos, isInitialFix: !state.hasRealGpsFix);
-      });
+        locationSettings: streamSettings,
+      ).listen(
+        (Position pos) {
+          _handleNewGpsPosition(pos, isInitialFix: !state.hasRealGpsFix);
+        },
+        onError: (_) {
+          _gpsSubscription = null;
+        },
+        onDone: () {
+          _gpsSubscription = null;
+        },
+      );
     } catch (_) {
       state = state.copyWith(currentStreetName: 'GPS no disponible');
+    } finally {
+      _isStartingGps = false;
     }
   }
 
   void _handleNewGpsPosition(Position pos, {bool isInitialFix = false}) {
     final nextLatLng = LatLng(pos.latitude, pos.longitude);
+    final nextSpeedMps =
+        (!pos.speed.isNaN && pos.speed >= 0.0) ? pos.speed : 0.0;
+    final hasValidHeading =
+        !pos.heading.isNaN && pos.heading >= 0.0 && nextSpeedMps >= 1.2;
+    final nextHeading = hasValidHeading ? pos.heading : state.currentHeading;
 
     // 1. Integrar distancia GPS real al odómetro automático de mantenimiento
     if (_previousGpsForOdometer != null) {
@@ -304,13 +423,23 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
     }
     _previousGpsForOdometer = nextLatLng;
 
-    // 2. Actualizar trazado de ruta SOLO a partir de la ubicación real (sin líneas rectas falsas)
+    // 2. Actualizar trazado de ruta SOLO si el desplazamiento >= 2m durante una sesión de laps
     var updatedRoute = state.routePolylinePoints;
     if (state.isLapSessionActive) {
-      updatedRoute = <LatLng>[
-        ...state.routePolylinePoints.take(300),
-        nextLatLng,
-      ];
+      final shouldAppend = updatedRoute.isEmpty ||
+          Geolocator.distanceBetween(
+                updatedRoute.last.latitude,
+                updatedRoute.last.longitude,
+                nextLatLng.latitude,
+                nextLatLng.longitude,
+              ) >=
+              2.0;
+      if (shouldAppend) {
+        updatedRoute = <LatLng>[
+          ...state.routePolylinePoints.take(300),
+          nextLatLng,
+        ];
+      }
     }
 
     // 3. Lógica de detección automática de cruce por el Punto de Partida (Laps)
@@ -350,6 +479,8 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
     state = state.copyWith(
       currentGpsPosition: nextLatLng,
       hasRealGpsFix: true,
+      currentHeading: nextHeading,
+      currentSpeedMps: nextSpeedMps,
       routePolylinePoints: updatedRoute,
       hasLeftStartZone: hasLeftZone,
       distanceToStartMeters: distToStart,
@@ -357,8 +488,12 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       currentLapElapsedSec: lapElapsed,
     );
 
-    // Centrar mini-mapa automáticamente siempre; centrar mapa completo en el primer fix
-    _animateMapTo(_miniMapController, nextLatLng, zoom: 16.0);
+    // Centrar y orientar el minimapa SIEMPRE en tiempo real (tipo videojuego)
+    _followMiniMapCamera(
+      nextLatLng,
+      bearing: nextHeading,
+      instant: isInitialFix,
+    );
     if (isInitialFix) {
       _animateMapTo(_fullTrackMapController, nextLatLng, zoom: 15.6);
     }
@@ -393,9 +528,9 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
     } catch (_) {}
 
     // Fallback: OpenStreetMap Nominatim reverse geocoding
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 4);
     try {
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 4);
       final uri = Uri.parse(
         'https://nominatim.openstreetmap.org/reverse?format=json&lat=${point.latitude}&lon=${point.longitude}&zoom=17&addressdetails=1',
       );
@@ -403,7 +538,6 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       req.headers.set('User-Agent', 'RSDigitalCockpit/2.0');
       final resp = await req.close().timeout(const Duration(seconds: 4));
       final body = await resp.transform(utf8.decoder).join();
-      client.close();
       final decoded = jsonDecode(body) as Map<String, dynamic>;
       final address = decoded['address'] as Map<String, dynamic>?;
       final road = (address?['road'] as String?) ??
@@ -413,7 +547,10 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       if (road != null && road.trim().isNotEmpty) {
         return road.trim();
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      client.close(force: true);
+    }
 
     return 'Calle ${point.latitude.toStringAsFixed(4)}, ${point.longitude.toStringAsFixed(4)}';
   }
@@ -431,6 +568,7 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
         clearFilter: true,
         nearbyPlaces: const <NearbyMapPlace>[],
         clearSelectedPlace: true,
+        clearNavigationRoute: true,
         isLoadingPlaces: false,
       );
       return;
@@ -441,6 +579,7 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       isLoadingPlaces: true,
       nearbyPlaces: const <NearbyMapPlace>[],
       clearSelectedPlace: true,
+      clearNavigationRoute: true,
     );
 
     final pos = state.currentGpsPosition;
@@ -461,30 +600,42 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       nearbyPlaces: found,
     );
 
-    // Ajustar el zoom para que todos los marcadores cercanos aparezcan de inmediato en el mapa
     if (found.isNotEmpty) {
       _fitCameraToPlaces(pos, found);
     }
   }
 
   void _fitCameraToPlaces(LatLng center, List<NearbyMapPlace> places) {
-    final controller = _fullTrackMapController;
-    if (controller == null) return;
-    try {
-      var minLat = center.latitude;
-      var maxLat = center.latitude;
-      var minLng = center.longitude;
-      var maxLng = center.longitude;
+    final points = <LatLng>[
+      center,
+      ...places.take(8).map((p) => p.position),
+    ];
+    _fitCameraToPoints(points, padding: 56);
+  }
 
-      for (final p in places.take(8)) {
-        if (p.position.latitude < minLat) minLat = p.position.latitude;
-        if (p.position.latitude > maxLat) maxLat = p.position.latitude;
-        if (p.position.longitude < minLng) minLng = p.position.longitude;
-        if (p.position.longitude > maxLng) maxLng = p.position.longitude;
+  void _fitCameraToPoints(List<LatLng> points, {double padding = 72}) {
+    final controller = _fullTrackMapController;
+    if (controller == null || points.isEmpty) return;
+    try {
+      var minLat = points.first.latitude;
+      var maxLat = points.first.latitude;
+      var minLng = points.first.longitude;
+      var maxLng = points.first.longitude;
+
+      for (final p in points) {
+        if (p.latitude < minLat) minLat = p.latitude;
+        if (p.latitude > maxLat) maxLat = p.latitude;
+        if (p.longitude < minLng) minLng = p.longitude;
+        if (p.longitude > maxLng) maxLng = p.longitude;
       }
 
-      if ((maxLat - minLat).abs() < 0.002 && (maxLng - minLng).abs() < 0.002) {
-        _animateMapTo(controller, center, zoom: 14.2);
+      if ((maxLat - minLat).abs() < 0.0015 &&
+          (maxLng - minLng).abs() < 0.0015) {
+        _animateMapTo(
+          controller,
+          LatLng((minLat + maxLat) / 2, (minLng + maxLng) / 2),
+          zoom: 15.5,
+        );
         return;
       }
 
@@ -494,11 +645,11 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
             southwest: LatLng(minLat, minLng),
             northeast: LatLng(maxLat, maxLng),
           ),
-          56,
+          padding,
         ),
       );
     } catch (_) {
-      _animateMapTo(controller, center, zoom: 13.5);
+      _animateMapTo(controller, points.first, zoom: 13.8);
     }
   }
 
@@ -507,15 +658,15 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
     LatLng center,
     TrackMapFilter filter,
   ) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 6);
     try {
-      const delta = 0.075; // ~8 km alrededor de tu ubicación real
+      const delta = 0.075;
       final left = center.longitude - delta;
       final right = center.longitude + delta;
       final top = center.latitude + delta;
       final bottom = center.latitude - delta;
 
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 6);
       final uri = Uri.parse(
         'https://nominatim.openstreetmap.org/search'
         '?format=json&addressdetails=1&limit=15&bounded=1'
@@ -527,7 +678,6 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       req.headers.set('Accept', 'application/json');
       final resp = await req.close().timeout(const Duration(seconds: 6));
       final body = await resp.transform(utf8.decoder).join();
-      client.close();
 
       final list = jsonDecode(body) as List<dynamic>;
       final places = <NearbyMapPlace>[];
@@ -558,6 +708,8 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       return places;
     } catch (_) {
       return const <NearbyMapPlace>[];
+    } finally {
+      client.close(force: true);
     }
   }
 
@@ -566,9 +718,9 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
     LatLng center,
     TrackMapFilter filter,
   ) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 6);
     try {
-      final client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 6);
       final uri = Uri.parse(
         'https://photon.komoot.io/api/'
         '?q=${Uri.encodeQueryComponent(filter.searchQuery)}'
@@ -578,7 +730,6 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       req.headers.set('User-Agent', 'RSDigitalCockpit/2.0 (Android)');
       final resp = await req.close().timeout(const Duration(seconds: 6));
       final body = await resp.transform(utf8.decoder).join();
-      client.close();
 
       final json = jsonDecode(body) as Map<String, dynamic>;
       final features = json['features'] as List<dynamic>? ?? const <dynamic>[];
@@ -598,7 +749,7 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
           lat,
           lon,
         );
-        if (distMeters > 12000.0) continue; // Solo resultados reales cercanos (<12 km)
+        if (distMeters > 12000.0) continue;
 
         final props =
             m['properties'] as Map<String, dynamic>? ?? const <String, dynamic>{};
@@ -621,14 +772,136 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
       return places;
     } catch (_) {
       return const <NearbyMapPlace>[];
+    } finally {
+      client.close(force: true);
     }
   }
 
+  /// Selecciona un lugar cercano y traza automáticamente la ruta en coche (línea azul)
   void selectNearbyPlace(NearbyMapPlace? place) {
+    if (place == null) {
+      state = state.copyWith(
+        clearSelectedPlace: true,
+        clearNavigationRoute: true,
+      );
+      return;
+    }
+
     state = state.copyWith(
       selectedPlace: place,
-      clearSelectedPlace: place == null,
+      clearNavigationRoute: true,
+      isCalculatingRoute: true,
     );
+    _calculateDrivingRouteToPlace(place);
+  }
+
+  Future<void> recalculateRouteToSelectedPlace() async {
+    final place = state.selectedPlace;
+    if (place == null) return;
+    state = state.copyWith(
+      isCalculatingRoute: true,
+      isDirectFallbackRoute: false,
+    );
+    await _calculateDrivingRouteToPlace(place);
+  }
+
+  Future<void> _calculateDrivingRouteToPlace(NearbyMapPlace place) async {
+    final origin = state.currentGpsPosition;
+    final dest = place.position;
+
+    var routeResult = await _queryOsrmRoute(
+      baseUrl: 'https://router.project-osrm.org/route/v1/driving',
+      origin: origin,
+      destination: dest,
+    );
+    routeResult ??= await _queryOsrmRoute(
+      baseUrl: 'https://routing.openstreetmap.de/routed-car/route/v1/driving',
+      origin: origin,
+      destination: dest,
+    );
+
+    if (state.selectedPlace?.id != place.id) return;
+
+    if (routeResult != null && routeResult.points.length >= 2) {
+      state = state.copyWith(
+        navigationRoutePoints: routeResult.points,
+        navigationDistanceMeters: routeResult.distanceMeters,
+        navigationDurationSec: routeResult.durationSeconds,
+        isCalculatingRoute: false,
+        isDirectFallbackRoute: false,
+      );
+      _fitCameraToPoints(routeResult.points, padding: 72);
+      return;
+    }
+
+    // Fallback elegante si no hay red hacia OSRM: línea directa discontinua
+    final straightDist = Geolocator.distanceBetween(
+      origin.latitude,
+      origin.longitude,
+      dest.latitude,
+      dest.longitude,
+    );
+    final fallbackPoints = <LatLng>[origin, dest];
+    state = state.copyWith(
+      navigationRoutePoints: fallbackPoints,
+      navigationDistanceMeters: straightDist,
+      navigationDurationSec: null,
+      isCalculatingRoute: false,
+      isDirectFallbackRoute: true,
+    );
+    _fitCameraToPoints(fallbackPoints, padding: 72);
+  }
+
+  Future<_OsrmRouteResult?> _queryOsrmRoute({
+    required String baseUrl,
+    required LatLng origin,
+    required LatLng destination,
+  }) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 6);
+    try {
+      final uri = Uri.parse(
+        '$baseUrl/${origin.longitude},${origin.latitude};'
+        '${destination.longitude},${destination.latitude}'
+        '?overview=full&geometries=geojson',
+      );
+      final req = await client.getUrl(uri);
+      req.headers.set('User-Agent', 'RSDigitalCockpit/2.0 (Android)');
+      req.headers.set('Accept', 'application/json');
+      final resp = await req.close().timeout(const Duration(seconds: 7));
+      if (resp.statusCode != 200) return null;
+      final body = await resp.transform(utf8.decoder).join();
+      final decoded = jsonDecode(body);
+      if (decoded is! Map<String, dynamic>) return null;
+      final routes = decoded['routes'];
+      if (routes is! List || routes.isEmpty) return null;
+      final first = routes.first;
+      if (first is! Map) return null;
+      final geometry = first['geometry'];
+      if (geometry is! Map) return null;
+      final coords = geometry['coordinates'];
+      if (coords is! List || coords.length < 2) return null;
+
+      final points = <LatLng>[];
+      for (final pt in coords) {
+        if (pt is List && pt.length >= 2) {
+          final lon = (pt[0] as num).toDouble();
+          final lat = (pt[1] as num).toDouble();
+          points.add(LatLng(lat, lon));
+        }
+      }
+      if (points.length < 2) return null;
+
+      return _OsrmRouteResult(
+        points: points,
+        distanceMeters: (first['distance'] as num?)?.toDouble() ?? 0.0,
+        durationSeconds: (first['duration'] as num?)?.toDouble() ?? 0.0,
+      );
+    } catch (_) {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
   }
 
   /// Establece el Punto de Partida / Meta en la ubicación GPS actual,
@@ -640,7 +913,6 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
     final now = DateTime.now();
     _currentLapStartedAt = now;
 
-    // Resolver nombre de la calle del punto de partida
     final street = await _resolveStreetName(startPos);
     final sanitizedStreet = street
         .replaceAll(RegExp(r'[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s_-]'), '')
@@ -711,14 +983,24 @@ class TrackMapTelemetryNotifier extends Notifier<TrackMapTelemetryState> {
     };
 
     try {
-      await FirebaseDatabase.instance
-          .ref('track_lap_sessions/$uid/$key')
-          .set(payload)
-          .timeout(const Duration(seconds: 4));
-      state = state.copyWith(
-        firebaseSyncStatus:
-            'Sincronizado en Firebase ("$streetName" • ${orderedLaps.length} laps)',
-      );
+      if (Firebase.apps.isNotEmpty) {
+        final db = FirebaseDatabase.instanceFor(
+          app: Firebase.app(),
+          databaseURL: DefaultFirebaseOptions.android.databaseURL,
+        );
+        await db
+            .ref('track_lap_sessions/$uid/$key')
+            .set(payload)
+            .timeout(const Duration(seconds: 6));
+        state = state.copyWith(
+          firebaseSyncStatus:
+              'Sincronizado en Firebase ("$streetName" • ${orderedLaps.length} laps)',
+        );
+      } else {
+        state = state.copyWith(
+          firebaseSyncStatus: 'Guardado localmente (Firebase no inicializado)',
+        );
+      }
     } catch (_) {
       state = state.copyWith(
         firebaseSyncStatus: 'Guardado localmente (pendiente de red)',

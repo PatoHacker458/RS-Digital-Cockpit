@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "796311716232",
+    "firebase_url": "https://rs-digital-cockpit-default-rtdb.firebaseio.com",
     "project_id": "rs-digital-cockpit",
     "storage_bucket": "rs-digital-cockpit.firebasestorage.app"
   },

@@ -12,6 +12,7 @@ import 'features/auth_profile/screens/email_verification_screen.dart';
 import 'features/cloud_sync_fcm/fcm_notification_service.dart';
 import 'features/cloud_sync_fcm/hud_notification_wrapper.dart';
 import 'features/cockpit_dashboard/cockpit_dashboard_screen.dart';
+import 'features/cockpit_dashboard/widgets/launcher_dock_widget.dart';
 import 'features/onboarding/onboarding_provider.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/splash/rs_splash_screen.dart';
@@ -26,9 +27,11 @@ Future<void> main() async {
   } catch (_) {}
 
   try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+    }
     FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
   } catch (_) {}
 
@@ -55,6 +58,7 @@ class RsDigitalCockpitApp extends ConsumerWidget {
     final splashBoot = ref.watch(splashBootProvider);
     final onboarding = ref.watch(onboardingProvider);
     final pilotProfile = ref.watch(pilotAuthProvider);
+    ref.watch(screenWakeLockProvider);
 
     return MaterialApp(
       title: 'RS Digital Cockpit',
