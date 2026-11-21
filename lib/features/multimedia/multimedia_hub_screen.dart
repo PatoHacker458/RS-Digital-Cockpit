@@ -319,19 +319,46 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
     } catch (_) {}
   }
 
-  /// Botón **ATT (Atenuación -75%)** al lado izquierdo:
-  /// - 1er toque: baja el volumen un 75% desde el nivel actual (queda al 25%).
+  /// Botón **ATT** al lado izquierdo:
+  /// - 1er toque: atenúa el volumen actual sin subirlo nunca si ya estaba bajo.
   /// - 2do toque: regresa el volumen exactamente a donde estaba antes de tocar ATT.
   Future<void> toggleAttenuation() async {
     HapticFeedback.mediumImpact();
     if (!state.isAttenuated) {
-      final originalVol = state.volumePercent > 0.04 ? state.volumePercent : 0.60;
-      final attenuatedVol = (originalVol * 0.25).clamp(0.0, 1.0);
+      var currentStep = state.currentStep;
+      var maxStep = state.maxStep > 0 ? state.maxStep : 15;
+      var originalVol = state.volumePercent;
+
+      try {
+        final volMap =
+            await _channel.invokeMethod<Map<dynamic, dynamic>>('getVolumeState');
+        if (volMap != null) {
+          currentStep = (volMap['current'] as num?)?.toInt() ?? currentStep;
+          maxStep = (volMap['max'] as num?)?.toInt() ?? maxStep;
+          originalVol =
+              ((volMap['percent'] as num?)?.toDouble() ?? originalVol)
+                  .clamp(0.0, 1.0);
+        }
+      } catch (_) {}
+
+      final int targetStep;
+      if (currentStep <= 0) {
+        targetStep = 0;
+      } else {
+        targetStep = (currentStep * 0.25).round().clamp(0, currentStep - 1);
+      }
+
+      final attenuatedVol = maxStep > 0
+          ? (targetStep / maxStep).clamp(0.0, originalVol)
+          : 0.0;
+
       state = state.copyWith(
         preAttVolumePercent: originalVol,
         isAttenuated: true,
         volumePercent: attenuatedVol,
-        currentStep: (attenuatedVol * state.maxStep).round(),
+        currentStep: targetStep,
+        maxStep: maxStep,
+        isMuted: targetStep == 0,
       );
       try {
         await _channel.invokeMethod<Map<dynamic, dynamic>>(
@@ -340,11 +367,15 @@ class MultimediaHubNotifier extends Notifier<MultimediaHubState> {
         );
       } catch (_) {}
     } else {
-      final restoredVol = (state.preAttVolumePercent ?? 0.65).clamp(0.0, 1.0);
+      final restoredVol =
+          (state.preAttVolumePercent ?? state.volumePercent).clamp(0.0, 1.0);
+      final maxStep = state.maxStep > 0 ? state.maxStep : 15;
+      final restoredStep = (restoredVol * maxStep).round().clamp(0, maxStep);
       state = state.copyWith(
         isAttenuated: false,
         volumePercent: restoredVol,
-        currentStep: (restoredVol * state.maxStep).round(),
+        currentStep: restoredStep,
+        isMuted: restoredStep == 0,
       );
       try {
         await _channel.invokeMethod<Map<dynamic, dynamic>>(
@@ -913,9 +944,7 @@ class _VolumeBarWithLeftAtt extends StatelessWidget {
                         ),
                         const SizedBox(width: 5),
                         Text(
-                          isCompact
-                              ? (state.isAttenuated ? '-75%' : 'ATT')
-                              : (state.isAttenuated ? 'ATT -75%' : 'ATT'),
+                          'ATT',
                           style: AppTheme.renaultSportHeaderStyle(
                             fontSize: isCompact ? 12 : 13,
                             color: state.isAttenuated

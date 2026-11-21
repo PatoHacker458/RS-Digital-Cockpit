@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../../firebase_options.dart';
 import '../auth_profile/providers/auth_profile_providers.dart';
 import '../telemetry/models/obd_telemetry_frame.dart';
 import '../telemetry/providers/telemetry_providers.dart';
@@ -125,13 +125,26 @@ final blackboxSyncMetaProvider =
   BlackboxSyncMetaNotifier.new,
 );
 
+class _RtdbRestResponse {
+  final int statusCode;
+  final dynamic data;
+  const _RtdbRestResponse(this.statusCode, this.data);
+}
+
 /// Controlador de Blackbox Cloud: sincroniza automáticamente al abrir la app o iniciar
-/// sesión, mantiene escucha en tiempo real entre dispositivos (tablet / teléfono) y
-/// respalda en caché local offline por cuenta.
+/// sesión, detecta la región activa de Realtime Database sin colgarse en timeouts,
+/// mantiene escucha en tiempo real entre dispositivos (tablet / teléfono) y respalda en local.
 class BlackboxRealtimeNotifier extends Notifier<List<BlackboxCloudRecord>> {
   static const String _legacyLocalCacheKey = 'clio_rs_blackbox_history';
+  static const List<String> _candidateDbUrls = <String>[
+    'https://rs-digital-cockpit-default-rtdb.firebaseio.com',
+    'https://rs-digital-cockpit-default-rtdb.us-central1.firebasedatabase.app',
+    'https://rs-digital-cockpit-default-rtdb.europe-west1.firebasedatabase.app',
+    'https://rs-digital-cockpit-default-rtdb.asia-southeast1.firebasedatabase.app',
+  ];
 
   StreamSubscription<DatabaseEvent>? _rtdbSubscription;
+  String? _resolvedDbUrl;
   int _syncGeneration = 0;
   bool _disposed = false;
 
@@ -139,12 +152,12 @@ class BlackboxRealtimeNotifier extends Notifier<List<BlackboxCloudRecord>> {
 
   bool _isActive(int gen) => !_disposed && gen == _syncGeneration;
 
-  FirebaseDatabase? _getDatabase() {
+  FirebaseDatabase? _getDatabaseForUrl(String url) {
     try {
       if (Firebase.apps.isEmpty) return null;
       return FirebaseDatabase.instanceFor(
         app: Firebase.app(),
-        databaseURL: DefaultFirebaseOptions.android.databaseURL,
+        databaseURL: url,
       );
     } catch (_) {
       return null;
@@ -160,6 +173,15 @@ class BlackboxRealtimeNotifier extends Notifier<List<BlackboxCloudRecord>> {
       }
     } catch (_) {}
     return null;
+  }
+
+  Future<String?> _getFirebaseIdToken() async {
+    try {
+      if (Firebase.apps.isEmpty) return null;
+      return await FirebaseAuth.instance.currentUser?.getIdToken();
+    } catch (_) {
+      return null;
+    }
   }
 
   @override
@@ -199,14 +221,15 @@ class BlackboxRealtimeNotifier extends Notifier<List<BlackboxCloudRecord>> {
     if (!_isActive(gen)) return;
 
     if (localMap.isNotEmpty) {
-      final localSorted = _sortRecords(localMap.values);
-      state = localSorted;
+      state = _sortRecords(localMap.values);
     }
 
     await _syncBidirectionalWithCloud(uid, gen, seedLocalMap: localMap);
-    if (!_isActive(gen)) return;
+  }
 
-    final db = _getDatabase();
+  void _attachLiveListener(String uid, int gen, String dbUrl) {
+    if (!_isActive(gen)) return;
+    final db = _getDatabaseForUrl(dbUrl);
     if (db == null) return;
 
     _rtdbSubscription?.cancel();
@@ -250,15 +273,10 @@ class BlackboxRealtimeNotifier extends Notifier<List<BlackboxCloudRecord>> {
     return map;
   }
 
-  Map<String, BlackboxCloudRecord> _parseSnapshotRecords(
-    DataSnapshot snapshot,
-  ) {
+  Map<String, BlackboxCloudRecord> _parseRawDynamicMap(dynamic rawValue) {
     final result = <String, BlackboxCloudRecord>{};
-    if (!snapshot.exists || snapshot.value is! Map) {
-      return result;
-    }
-    final rawMap = snapshot.value as Map<dynamic, dynamic>;
-    for (final entry in rawMap.entries) {
+    if (rawValue is! Map) return result;
+    for (final entry in rawValue.entries) {
       if (entry.value is! Map) continue;
       final itemMap = entry.value as Map<dynamic, dynamic>;
       final data = <String, dynamic>{
@@ -294,53 +312,170 @@ class BlackboxRealtimeNotifier extends Notifier<List<BlackboxCloudRecord>> {
     };
   }
 
+  Future<_RtdbRestResponse?> _restRequest(
+    String method,
+    String baseUrl,
+    String path, {
+    String? idToken,
+    Object? body,
+  }) async {
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 5);
+    try {
+      final cleanBase = baseUrl.endsWith('/')
+          ? baseUrl.substring(0, baseUrl.length - 1)
+          : baseUrl;
+      final authQuery = (idToken != null && idToken.isNotEmpty)
+          ? '?auth=${Uri.encodeQueryComponent(idToken)}'
+          : '';
+      final uri = Uri.parse('$cleanBase/$path.json$authQuery');
+      final req = await client
+          .openUrl(method, uri)
+          .timeout(const Duration(seconds: 5));
+      req.headers.set('Accept', 'application/json');
+      if (body != null) {
+        req.headers.contentType = ContentType.json;
+        req.write(jsonEncode(body));
+      }
+      final resp = await req.close().timeout(const Duration(seconds: 6));
+      final text = await resp
+          .transform(utf8.decoder)
+          .join()
+          .timeout(const Duration(seconds: 6));
+      dynamic decoded;
+      if (text.trim().isNotEmpty) {
+        try {
+          decoded = jsonDecode(text);
+        } catch (_) {
+          decoded = text;
+        }
+      }
+      return _RtdbRestResponse(resp.statusCode, decoded);
+    } catch (_) {
+      return null;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  Future<(String?, _RtdbRestResponse?)> _probeActiveDatabase(
+    String uid, {
+    String? idToken,
+  }) async {
+    final urls = _resolvedDbUrl != null
+        ? <String>[_resolvedDbUrl!]
+        : _candidateDbUrls;
+
+    final responses = await Future.wait(
+      urls.map(
+        (url) async => (
+          url,
+          await _restRequest(
+            'GET',
+            url,
+            'blackbox_sessions/$uid',
+            idToken: idToken,
+          ),
+        ),
+      ),
+    );
+
+    for (final (url, resp) in responses) {
+      if (resp != null && resp.statusCode == 200) {
+        _resolvedDbUrl = url;
+        return (url, resp);
+      }
+    }
+
+    for (final (url, resp) in responses) {
+      if (resp != null && (resp.statusCode == 401 || resp.statusCode == 403)) {
+        _resolvedDbUrl = url;
+        return (url, resp);
+      }
+    }
+
+    for (final (url, resp) in responses) {
+      if (resp != null) {
+        return (url, resp);
+      }
+    }
+
+    return (null, null);
+  }
+
   Future<void> _syncBidirectionalWithCloud(
     String uid,
     int gen, {
     Map<String, BlackboxCloudRecord>? seedLocalMap,
   }) async {
-    final db = _getDatabase();
-    if (db == null) return;
+    if (Firebase.apps.isEmpty) return;
 
     ref.read(blackboxSyncMetaProvider.notifier).setSyncing();
     final localMap = seedLocalMap ?? await _loadLocalRecordsForUid(uid);
     if (!_isActive(gen)) return;
 
-    try {
-      final snapshot = await db
-          .ref('blackbox_sessions/$uid')
-          .get()
-          .timeout(const Duration(seconds: 10));
-      if (!_isActive(gen)) return;
+    final idToken = await _getFirebaseIdToken();
+    if (!_isActive(gen)) return;
 
-      final merged = _parseSnapshotRecords(snapshot);
+    final (resolvedUrl, remoteResp) =
+        await _probeActiveDatabase(uid, idToken: idToken);
+    if (!_isActive(gen)) return;
 
-      // Subir sesiones creadas offline en este dispositivo que aún no estén en Firebase
-      for (final localRec in localMap.values) {
-        if (!localRec.syncedToFirebase && !merged.containsKey(localRec.sessionId)) {
-          try {
-            await db
-                .ref('blackbox_sessions/$uid/${localRec.sessionId}')
-                .set(_recordToRemotePayload(localRec))
-                .timeout(const Duration(seconds: 8));
-            merged[localRec.sessionId] = localRec.copyWith(syncedToFirebase: true);
-          } catch (_) {
-            merged[localRec.sessionId] = localRec;
-          }
+    if (remoteResp == null) {
+      ref.read(blackboxSyncMetaProvider.notifier).setError(
+            'Sin conexión a internet o servidor Firebase no disponible.',
+          );
+      return;
+    }
+
+    if (remoteResp.statusCode == 401 || remoteResp.statusCode == 403) {
+      ref.read(blackboxSyncMetaProvider.notifier).setError(
+            'Permiso denegado en Firebase Realtime Database (revisa Rules en Firebase Console).',
+          );
+      return;
+    }
+
+    if (remoteResp.statusCode == 404) {
+      _resolvedDbUrl = null;
+      ref.read(blackboxSyncMetaProvider.notifier).setError(
+            'Falta crear Realtime Database en Firebase Console (proyecto rs-digital-cockpit).',
+          );
+      return;
+    }
+
+    if (remoteResp.statusCode != 200 || resolvedUrl == null) {
+      ref.read(blackboxSyncMetaProvider.notifier).setError(
+            'No se pudo sincronizar (HTTP ${remoteResp.statusCode}).',
+          );
+      return;
+    }
+
+    final merged = _parseRawDynamicMap(remoteResp.data);
+
+    // Subir sesiones creadas offline en este dispositivo que aún no estén en Firebase
+    for (final localRec in localMap.values) {
+      if (!localRec.syncedToFirebase && !merged.containsKey(localRec.sessionId)) {
+        final putResp = await _restRequest(
+          'PUT',
+          resolvedUrl,
+          'blackbox_sessions/$uid/${localRec.sessionId}',
+          idToken: idToken,
+          body: _recordToRemotePayload(localRec),
+        );
+        if (putResp != null && putResp.statusCode == 200) {
+          merged[localRec.sessionId] = localRec.copyWith(syncedToFirebase: true);
+        } else {
+          merged[localRec.sessionId] = localRec;
         }
       }
-
-      if (!_isActive(gen)) return;
-      final sorted = _sortRecords(merged.values);
-      state = sorted;
-      await _persistLocalForUid(uid, sorted);
-      ref.read(blackboxSyncMetaProvider.notifier).setSuccess();
-    } catch (e) {
-      if (!_isActive(gen)) return;
-      ref.read(blackboxSyncMetaProvider.notifier).setError(
-            'Error al sincronizar con Firebase: $e',
-          );
     }
+
+    if (!_isActive(gen)) return;
+    final sorted = _sortRecords(merged.values);
+    state = sorted;
+    await _persistLocalForUid(uid, sorted);
+    ref.read(blackboxSyncMetaProvider.notifier).setSuccess();
+    _attachLiveListener(uid, gen, resolvedUrl);
   }
 
   Future<void> _handleRemoteSnapshot(
@@ -349,7 +484,9 @@ class BlackboxRealtimeNotifier extends Notifier<List<BlackboxCloudRecord>> {
     DataSnapshot snapshot,
   ) async {
     if (!_isActive(gen)) return;
-    final merged = _parseSnapshotRecords(snapshot);
+    final merged = snapshot.exists
+        ? _parseRawDynamicMap(snapshot.value)
+        : <String, BlackboxCloudRecord>{};
 
     for (final localRec in state) {
       if (!localRec.syncedToFirebase && !merged.containsKey(localRec.sessionId)) {
@@ -397,20 +534,29 @@ class BlackboxRealtimeNotifier extends Notifier<List<BlackboxCloudRecord>> {
     );
 
     var remoteSuccess = false;
-    final db = _getDatabase();
-    if (db != null && uid != 'anonymous-rs172') {
-      try {
+    if (Firebase.apps.isNotEmpty && uid != 'anonymous-rs172') {
+      final idToken = await _getFirebaseIdToken();
+      var dbUrl = _resolvedDbUrl;
+      if (dbUrl == null) {
+        final (probedUrl, probedResp) =
+            await _probeActiveDatabase(uid, idToken: idToken);
+        if (probedResp != null && probedResp.statusCode == 200) {
+          dbUrl = probedUrl;
+        }
+      }
+      if (dbUrl != null) {
         final payload = _recordToRemotePayload(
           draftRecord,
           dtcsJson: dtcs.map((d) => d.toJson()).toList(),
         );
-        await db
-            .ref('blackbox_sessions/$uid/$sessionId')
-            .set(payload)
-            .timeout(const Duration(seconds: 8));
-        remoteSuccess = true;
-      } catch (_) {
-        remoteSuccess = false;
+        final putResp = await _restRequest(
+          'PUT',
+          dbUrl,
+          'blackbox_sessions/$uid/$sessionId',
+          idToken: idToken,
+          body: payload,
+        );
+        remoteSuccess = putResp != null && putResp.statusCode == 200;
       }
     }
 
@@ -434,12 +580,17 @@ class BlackboxRealtimeNotifier extends Notifier<List<BlackboxCloudRecord>> {
     await _persistLocalForUid(uid, updated);
 
     try {
-      final db = _getDatabase();
-      if (db != null && uid != 'anonymous-rs172') {
-        await db
-            .ref('blackbox_sessions/$uid/$sessionId')
-            .remove()
-            .timeout(const Duration(seconds: 6));
+      if (Firebase.apps.isNotEmpty && uid != 'anonymous-rs172') {
+        final dbUrl = _resolvedDbUrl;
+        if (dbUrl != null) {
+          final idToken = await _getFirebaseIdToken();
+          await _restRequest(
+            'DELETE',
+            dbUrl,
+            'blackbox_sessions/$uid/$sessionId',
+            idToken: idToken,
+          );
+        }
       }
     } catch (_) {}
   }

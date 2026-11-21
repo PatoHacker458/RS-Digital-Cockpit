@@ -72,6 +72,34 @@ class TrackMapScreen extends ConsumerWidget {
               ),
               style: isDark ? _darkMapStyleJson : null,
               onMapCreated: mapNotifier.attachMiniMapController,
+              markers: <Marker>{
+                if (mapState.selectedPlace != null)
+                  Marker(
+                    markerId: MarkerId('mini_${mapState.selectedPlace!.id}'),
+                    position: mapState.selectedPlace!.position,
+                    icon: BitmapDescriptor.defaultMarkerWithHue(
+                      BitmapDescriptor.hueBlue,
+                    ),
+                  ),
+              },
+              polylines: <Polyline>{
+                if (mapState.navigationRoutePoints.length >= 2)
+                  Polyline(
+                    polylineId: const PolylineId('mini_poi_navigation_route'),
+                    points: mapState.navigationRoutePoints,
+                    color: const Color(0xFF1D8BFF),
+                    width: 5,
+                    jointType: JointType.round,
+                    startCap: Cap.roundCap,
+                    endCap: Cap.roundCap,
+                    patterns: mapState.isDirectFallbackRoute
+                        ? <PatternItem>[
+                            PatternItem.dash(14),
+                            PatternItem.gap(8),
+                          ]
+                        : const <PatternItem>[],
+                  ),
+              },
               myLocationEnabled: false,
               myLocationButtonEnabled: false,
               zoomControlsEnabled: false,
@@ -93,6 +121,63 @@ class TrackMapScreen extends ConsumerWidget {
                 ),
               ),
             ),
+
+            if (mapState.selectedPlace != null)
+              Positioned(
+                bottom: 8,
+                left: 8,
+                right: 8,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xE00F1115),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFF1D8BFF).withValues(alpha: 0.75),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.directions_car_rounded,
+                        size: 14,
+                        color: Color(0xFF60A5FA),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          mapState.isCalculatingRoute
+                              ? '${mapState.selectedPlace!.name} • Calculando...'
+                              : '${mapState.selectedPlace!.name} • ${_formatRouteSummary(mapState)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      InkWell(
+                        onTap: () => mapNotifier.selectNearbyPlace(null),
+                        borderRadius: BorderRadius.circular(6),
+                        child: const Padding(
+                          padding: EdgeInsets.all(2),
+                          child: Icon(
+                            Icons.close_rounded,
+                            size: 14,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
 
             Positioned(
               top: 8,
