@@ -393,7 +393,7 @@ final multimediaHubProvider =
 );
 
 /// Menú **MULTIMEDIA** rediseñado:
-/// - Tarjeta principal con el arte de la canción a fondo completo + filtro claro translúcido.
+/// - Tarjeta principal con el arte de la canción a fondo completo + filtro translúcido adaptable al tema activo (Claro / Oscuro / Auto).
 /// - Interfaz limpia y centrada con botones Random (Shuffle), Anterior, Play/Pausa, Siguiente y Repeat.
 /// - Barra de volumen inferior con botón **ATT** al lado izquierdo y slider silencioso (sin popup Android).
 class MultimediaHubScreen extends ConsumerWidget {
@@ -470,8 +470,11 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
-    const inkColor = Color(0xFF0F172A);
-    const mutedInkColor = Color(0xFF334155);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final inkColor =
+        isDark ? const Color(0xFFF8FAFC) : const Color(0xFF0F172A);
+    final mutedInkColor =
+        isDark ? const Color(0xFFCBD5E1) : const Color(0xFF334155);
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -491,12 +494,13 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
             CachedNetworkImage(
               imageUrl: state.albumArtUri!,
               fit: BoxFit.cover,
-              errorWidget: (_, __, ___) => _FallbackBackdrop(primary: primary),
+              errorWidget: (_, __, ___) =>
+                  _FallbackBackdrop(primary: primary, isDark: isDark),
             )
           else
-            _FallbackBackdrop(primary: primary),
+            _FallbackBackdrop(primary: primary, isDark: isDark),
 
-          // 2. Filtro claro translúcido con desenfoque sutil para legibilidad perfecta
+          // 2. Filtro translúcido adaptable al tema activo (Oscuro ahumado vs Claro luminoso)
           BackdropFilter(
             filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
             child: Container(
@@ -504,11 +508,17 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
-                  colors: <Color>[
-                    Colors.white.withValues(alpha: 0.62),
-                    const Color(0xFFF1F5F9).withValues(alpha: 0.74),
-                    const Color(0xFFE2E8F0).withValues(alpha: 0.80),
-                  ],
+                  colors: isDark
+                      ? <Color>[
+                          const Color(0xFF0F1115).withValues(alpha: 0.62),
+                          const Color(0xFF141820).withValues(alpha: 0.74),
+                          const Color(0xFF0B0E14).withValues(alpha: 0.84),
+                        ]
+                      : <Color>[
+                          Colors.white.withValues(alpha: 0.62),
+                          const Color(0xFFF1F5F9).withValues(alpha: 0.74),
+                          const Color(0xFFE2E8F0).withValues(alpha: 0.80),
+                        ],
                 ),
               ),
             ),
@@ -546,7 +556,10 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                                   vertical: 5,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.72),
+                                  color: isDark
+                                      ? const Color(0xFF1C2026)
+                                          .withValues(alpha: 0.74)
+                                      : Colors.white.withValues(alpha: 0.72),
                                   borderRadius: BorderRadius.circular(20),
                                   border: Border.all(
                                     color: inkColor.withValues(alpha: 0.16),
@@ -569,7 +582,7 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                                       ),
                                     ),
                                     const SizedBox(width: 5),
-                                    const Icon(
+                                    Icon(
                                       Icons.open_in_new_rounded,
                                       size: 13,
                                       color: mutedInkColor,
@@ -581,8 +594,9 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                             if (!state.hasMediaPermission)
                               ElevatedButton.icon(
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: inkColor,
-                                  foregroundColor: Colors.white,
+                                  backgroundColor: isDark ? primary : inkColor,
+                                  foregroundColor:
+                                      isDark ? Colors.black : Colors.white,
                                   visualDensity: VisualDensity.compact,
                                 ),
                                 onPressed: notifier.openMediaPermissionSettings,
@@ -692,6 +706,7 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                                 active: state.shuffleEnabled,
                                 accentColor: primary,
                                 inkColor: inkColor,
+                                isDark: isDark,
                                 onTap: notifier.toggleShuffle,
                               ),
                               const SizedBox(width: 18),
@@ -704,6 +719,7 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                                 iconSize: 36,
                                 accentColor: primary,
                                 inkColor: inkColor,
+                                isDark: isDark,
                                 onTap: () => notifier
                                     .sendMediaTransportCommand('previous'),
                               ),
@@ -721,6 +737,7 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                                 isPrimaryFocal: true,
                                 accentColor: primary,
                                 inkColor: inkColor,
+                                isDark: isDark,
                                 onTap: () => notifier
                                     .sendMediaTransportCommand('play_pause'),
                               ),
@@ -734,6 +751,7 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                                 iconSize: 36,
                                 accentColor: primary,
                                 inkColor: inkColor,
+                                isDark: isDark,
                                 onTap: () =>
                                     notifier.sendMediaTransportCommand('next'),
                               ),
@@ -754,6 +772,7 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
                                 active: state.repeatMode != MediaRepeatMode.off,
                                 accentColor: primary,
                                 inkColor: inkColor,
+                                isDark: isDark,
                                 onTap: notifier.cycleRepeatMode,
                               ),
                             ],
@@ -774,8 +793,12 @@ class _FullArtworkCenteredPlayerCard extends StatelessWidget {
 
 class _FallbackBackdrop extends StatelessWidget {
   final Color primary;
+  final bool isDark;
 
-  const _FallbackBackdrop({required this.primary});
+  const _FallbackBackdrop({
+    required this.primary,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -784,18 +807,24 @@ class _FallbackBackdrop extends StatelessWidget {
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: <Color>[
-            primary.withValues(alpha: 0.45),
-            const Color(0xFF94A3B8),
-            const Color(0xFFCBD5E1),
-          ],
+          colors: isDark
+              ? <Color>[
+                  primary.withValues(alpha: 0.35),
+                  const Color(0xFF1C2026),
+                  const Color(0xFF0F1115),
+                ]
+              : <Color>[
+                  primary.withValues(alpha: 0.45),
+                  const Color(0xFF94A3B8),
+                  const Color(0xFFCBD5E1),
+                ],
         ),
       ),
       child: Center(
         child: Icon(
           Icons.album_rounded,
           size: 220,
-          color: Colors.white.withValues(alpha: 0.25),
+          color: Colors.white.withValues(alpha: isDark ? 0.10 : 0.25),
         ),
       ),
     );
@@ -809,6 +838,7 @@ class _CenteredMediaButton extends StatelessWidget {
   final double iconSize;
   final Color accentColor;
   final Color inkColor;
+  final bool isDark;
   final bool isPrimaryFocal;
   final bool active;
   final VoidCallback onTap;
@@ -820,6 +850,7 @@ class _CenteredMediaButton extends StatelessWidget {
     required this.iconSize,
     required this.accentColor,
     required this.inkColor,
+    required this.isDark,
     required this.onTap,
     this.isPrimaryFocal = false,
     this.active = false,
@@ -831,11 +862,13 @@ class _CenteredMediaButton extends StatelessWidget {
         ? inkColor
         : active
             ? accentColor
-            : Colors.white.withValues(alpha: 0.68);
+            : (isDark
+                ? const Color(0xFF1C2026).withValues(alpha: 0.74)
+                : Colors.white.withValues(alpha: 0.68));
     final fgColor = isPrimaryFocal
-        ? Colors.white
+        ? (isDark ? const Color(0xFF0F1115) : Colors.white)
         : active
-            ? Colors.white
+            ? (isDark ? Colors.black : Colors.white)
             : inkColor;
 
     return Tooltip(
@@ -859,7 +892,8 @@ class _CenteredMediaButton extends StatelessWidget {
             boxShadow: isPrimaryFocal
                 ? <BoxShadow>[
                     BoxShadow(
-                      color: inkColor.withValues(alpha: 0.30),
+                      color:
+                          Colors.black.withValues(alpha: isDark ? 0.45 : 0.30),
                       blurRadius: 14,
                       offset: const Offset(0, 6),
                     ),
